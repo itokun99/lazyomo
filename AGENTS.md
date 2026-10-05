@@ -1,149 +1,95 @@
-# AGENTS.md - AI Agent Operating Rules for omo-switch
+# PROJECT KNOWLEDGE BASE
 
-## Project Identity
+**Generated:** 2026-10-05
+**Commit:** ff6628e (main)
+**Branch:** main
 
-**Name**: omo-switch
-**Type**: CLI/TUI config switcher for oh-my-openagent
-**Language**: Go 1.26.3
-**Framework**: Charm ecosystem (Bubble Tea + Bubbles + Lipgloss)
-**Architecture**: Clean Architecture (domain → application → infrastructure → cli/tui)
+## OVERVIEW
+omo-switch - CLI/TUI switcher for oh-my-openagent configs. Go 1.26.3 + Charm stack (Bubble Tea/Bubbles/Lipgloss), clean architecture (domain -> application -> infrastructure -> cli/tui), manual CLI dispatch. The npm package `@indrawandev/omo-switch` ships `bin/omo-switch.js`, a complete JS re-implementation of the same CLI.
 
-## Core Rules for AI Agents
-
-### Rule 1: Respect Package Boundaries
-
+## STRUCTURE
 ```
-domain/ → NO I/O, NO imports from other internal packages
-application/ → imports domain/ + infrastructure/
-infrastructure/ → imports domain/ types only for validation
-cli/ → imports application/ + domain/
-tui/ → imports application/ + domain/ + infrastructure/ (for BackupInfo only)
-```
-
-**VIOLATION EVIDENCE**: If you add `os.ReadFile` to `domain/`, you broke the architecture.
-
-### Rule 2: Follow Interface-Based DI
-
-All infrastructure dependencies are injected via interfaces:
-- `infrastructure.Store` - config file operations
-- `infrastructure.BackupManager` - backup operations
-- `domain.SchemaValidator` - validation logic
-
-**NEVER** create concrete dependencies inside service layer.
-
-### Rule 3: CLI Command Pattern
-
-Commands are defined in `internal/cli/handler.go` using a switch statement:
-```go
-func Handle(service *application.ConfigService, args []string, w io.Writer) int {
-    switch args[0] {
-    case "--list", "-l":
-        return cmdList(service, w)
-    // ...
-    }
-}
+omo-switcher/
+├── internal/domain/           # pure types + rules (Config, groups, schema) - no I/O
+├── internal/infrastructure/   # Store + BackupManager impls (hardcoded ~/.config paths)
+├── internal/application/      # ConfigService orchestrator
+├── internal/cli/              # Handle() manual dispatch
+├── internal/tui/              # Bubble Tea app shell -> tui/AGENTS.md
+│   └── components/            # 9 leaf renderers -> components/AGENTS.md
+├── cmd/omo-switch/            # MISSING from tree - see NOTES
+├── bin/omo-switch.js          # npm launcher + JS fallback implementation
+├── scripts/                   # build.sh/.bat, install.js (npm postinstall)
+└── Formula/omo-switch.rb      # Homebrew formula (downloads release binaries)
 ```
 
-**NO Cobra, NO urfave/cli** - this project uses manual dispatch.
+## WHERE TO LOOK
+| Task | Location | Notes |
+|------|----------|-------|
+| Add CLI command | internal/cli/handler.go:16 | switch in `Handle()`; `cmdXxx(service, w) int` |
+| Add TUI view / component | internal/tui/ | see tui/AGENTS.md + components/AGENTS.md |
+| Config grouping | internal/domain/group.go:11 | `KnownGroups` + "Custom" fallback |
+| Validation rules | internal/domain/schema.go | `SchemaValidator`; required key: `agents` |
+| Config/backup paths | internal/infrastructure/filesystem.go:27 | hardcoded `~/.config/opencode/...` |
+| Service logic | internal/application/service.go:17 | `ConfigService` |
 
-### Rule 4: TUI Component Pattern
+## CODE MAP
+| Symbol | Type | Location | Refs (LSP) | Role |
+|--------|------|----------|------------|------|
+| App | struct | internal/tui/app.go:54 | 34 | Bubble Tea model (largest source file, 653 lines) |
+| ConfigService | struct | internal/application/service.go:17 | 20 | orchestrator injected into cli/tui |
+| Config | struct | internal/domain/config.go:6 | 19 | value type; immutable `Validate()` |
+| Handle | func | internal/cli/handler.go:16 | 13 | CLI dispatch (orphaned until cmd/ returns) |
+| Store | interface | internal/infrastructure/filesystem.go:11 | 5 | config file ops |
+| KnownGroups | map | internal/domain/group.go | - | display classification |
 
-Every component in `internal/tui/components/` follows this pattern:
-```go
-type FooModel struct { /* state */ }
-type FooStyles struct { /* lipgloss styles */ }
-func NewFooModel(...) FooModel
-func (m *FooModel) Render(styles FooStyles, width int) string
-func (m *FooModel) Show(...)
-func (m *FooModel) Hide()
-func (m FooModel) IsActive() bool
+## CONVENTIONS (deviations from default Go)
+- Package boundaries: domain -> infrastructure -> application; cli imports application + domain; tui imports domain + infrastructure + components; components are leaves. `domain/` has NO I/O and no internal imports.
+- Interface-based DI: `infrastructure.Store`, `infrastructure.BackupManager`, `domain.SchemaValidator` are injected into `ConfigService` (service.go:24). Never construct concrete deps in the service layer.
+- Interfaces are declared next to their implementation; the TUI declares a consumer-side `configService` interface (app.go:16-28) instead of importing `internal/application`.
+- Manual CLI dispatch only: `Handle(service, args, w) int` switches on `args[0]`; handlers write to the injected `io.Writer`, never `os.Stdout`. NO Cobra / urfave.
+- Errors: `fmt.Errorf("verb-ing noun: %w", err)` only - no custom error types, no sentinels, no `errors.Is/As`. The TUI never propagates: it renders "Error: ..." in the status bar (3s auto-clear).
+- Graceful degradation: `os.IsNotExist` -> empty value + `nil` error (filesystem.go:50, backup.go:81).
+- `Config.Validate` is immutable: returns a new `Config`, never mutates the receiver (config.go:28).
+- Tests: stdlib `testing` only (no testify); table-driven + `t.Run`; hand-written mocks with compile-time checks (`var _ X = (*mockX)(nil)`); black-box `_test` packages only for application + cli.
+- Test seams: `NewX()` derives `$HOME` paths; `NewXWithPath(...)` accepts `t.TempDir()` (filesystem.go:39, backup.go:46).
+- TUI components: contract lives in internal/tui/components/AGENTS.md (each component owns its Styles; leaf nodes).
+- Paths (no XDG): configs `~/.config/opencode/omo_configs/omo-<alias>.json`, active `~/.config/opencode/oh-my-openagent.json`, backups `~/.config/omo-switch/backups/oh-my-openagent.<ts>.json`; dirs 0o755, files 0o644.
+- Group display order is the hardcoded `knownGroupNames()` slice (Mono, Optimized, Low-Cost, Custom) because `KnownGroups` is a map (service.go:33); CLI sorts Custom alphabetically.
+
+## ANTI-PATTERNS (THIS PROJECT)
+| Violation | Why it's wrong | Where it bites |
+|-----------|----------------|----------------|
+| I/O or internal imports in `domain/` | breaks pure business-logic isolation | domain/config.go, group.go |
+| Business logic in `infrastructure/` | single responsibility | infrastructure/filesystem.go |
+| External test frameworks / assertion libs | stdlib-only convention | any `*_test.go` |
+| Shared `Styles` structs across components | causes circular imports | tui/components/* |
+| New packages without strong reason | over-engineering (small repo) | internal/* |
+| Cobra / urfave / CLI frameworks | manual dispatch is the rule | internal/cli/handler.go |
+| `os.Stdout` inside CLI handlers | breaks the injected-writer contract | internal/cli/handler.go |
+
+No TODO/FIXME/HACK/DEPRECATED markers exist in Go code - debt lives in this file and prose docs only.
+
+## UNIQUE STYLES
+- Dual implementation: the Go tree (internal/) and a complete JS fallback (bin/omo-switch.js) that duplicates paths, KNOWN_GROUPS, and schema validation.
+- "Active config" detection is content comparison: target file vs every omo-*.json (service.go:78-103; same in the JS impl). Editing the active file in place breaks detection until a switch.
+- `FilesystemStore.WriteConfig` exists but is never called by the service; `SwitchConfig` writes the target with a direct `os.WriteFile` (service.go:123).
+- First-run gotcha: `SwitchConfig` requires an existing target file - `backup.CreateBackup` errors when the target is missing (backup.go:55), so switching with no active config fails.
+
+## COMMANDS
+```bash
+go test ./...        # 6/6 packages pass - the only working quality gate
+go vet ./...         # clean
+go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out
+go build -o omo-switch ./cmd/omo-switch   # FAILS: cmd/ absent from the tree
+go install github.com/itokun99/omo-switch/cmd/omo-switch@latest   # same missing target
 ```
 
-**CRITICAL**: Each component owns its own `Styles` struct. Never share styles across components.
-
-### Rule 5: Testing Conventions
-
-- **Framework**: Standard `testing` package only (no testify)
-- **Pattern**: Table-driven with `t.Run()`
-- **Mocks**: Hand-written structs with compile-time interface checks
-- **Package strategy**: Same-package for unexported access, external-test for black-box
-
-### Rule 6: Error Handling
-
-```go
-// Creation
-fmt.Errorf("context: %w", err)
-
-// User-facing (CLI)
-fmt.Fprintf(w, "Error: %v\n", err)
-return 1
-
-// User-facing (TUI)
-a.status.SetMessage("Error: " + msg.err.Error())
-```
-
-**NO custom error types, NO sentinel errors** in current codebase.
-
-### Rule 7: Config File Conventions
-
-- Config files: `~/.config/opencode/omo_configs/omo-*.json`
-- Active config: `~/.config/opencode/oh-my-openagent.json`
-- Backups: `~/.config/omo-switch/backups/oh-my-openagent.<timestamp>.json`
-- Naming: `omo-<alias>.json` where alias is the config name
-
-### Rule 8: Group Classification
-
-Config groups are defined in `internal/domain/group.go`:
-```go
-var KnownGroups = map[string][]string{
-    "Mono":      {"minimax", "qwen", "deepseek", "glm", "gpt", "claude"},
-    "Optimized": {"optimized-high", "optimized-medium", "optimized-low"},
-    "Low-Cost":  {"lc-mode-low", "lc-mode-medium", "lc-mode-high", "lc-mode-ultra"},
-}
-```
-
-Unknown aliases fall into "Custom" group.
-
-## Architecture Violations to Avoid
-
-| Violation | Why It's Wrong | Where It Happens |
-|-----------|---------------|------------------|
-| Adding I/O to domain/ | Breaks pure business logic isolation | domain/config.go, domain/group.go |
-| Adding business logic to infrastructure/ | Violates single responsibility | infrastructure/filesystem.go |
-| Using external test frameworks | Inconsistent with project conventions | Any *_test.go |
-| Sharing Styles structs across components | Causes circular imports | tui/components/* |
-| Creating new packages without strong reason | Over-engineering for small project | internal/* |
-| Using Cobra or other CLI frameworks | Project uses manual dispatch | internal/cli/handler.go |
-
-## Technical Debt Inventory
-
-1. **Duplicate path constants**: `targetPath` hardcoded in both `FilesystemStore` and `FilesystemBackupManager`
-2. **No XDG compliance**: Hardcoded `~/.config/` paths instead of `$XDG_CONFIG_HOME`
-3. **No shared test utilities**: Mocks duplicated between `application_test` and `cli_test`
-4. **No cmd/ tests**: Entry point is untested
-5. **Simplistic diff algorithm**: Line-by-line comparison, not proper diff library
-6. **No config for omo-switch itself**: All paths are compile-time constants
-
-## File Reference
-
-| Task | File | Lines |
-|------|------|-------|
-| Add CLI command | internal/cli/handler.go | 172 |
-| Add TUI view | internal/tui/app.go | 653 |
-| Add TUI component | internal/tui/components/ | 9 files |
-| Add config group | internal/domain/group.go | 47 |
-| Change validation | internal/domain/schema.go | 38 |
-| Modify service | internal/application/service.go | 184 |
-| Change config paths | internal/infrastructure/filesystem.go | 120 |
-| Change backup behavior | internal/infrastructure/backup.go | 158 |
-
-## Quick Start for AI Agents
-
-1. **Read this file first** - understand the architecture
-2. **Check AGENTS.md in target package** - if exists, read it
-3. **Find similar existing code** - copy patterns, not invent new ones
-4. **Run tests** - `go test ./...` before and after changes
-5. **Verify boundaries** - don't cross package dependency lines
+## NOTES
+- **`cmd/omo-switch/main.go` is missing** - there is no `package main` anywhere, and no `cmd/` in git history. Yet scripts/build.sh:6, scripts/build.bat, .github/workflows/release.yml:34, README and CONTRIBUTING all reference it. Restore the wiring documented at .agents/rules/cli-architecture.md:53-80 before any build work.
+- CI (`release.yml`) runs on `v*` tags only: builds the missing path, runs no tests/vet, pins Go 1.22 while go.mod requires 1.26.3.
+- Version skew: scripts/install.js pins `v2.0.0` vs package.json/Formula `2.0.1`; npm repo URL uses `omo-switcher` while the Go module path and install REPO use `omo-switch`.
+- Debt: duplicate `targetPath` literal (filesystem.go:34, backup.go:41); `mockStore`/`mockBackupManager` duplicated between service_test.go and handler_test.go; naive line-by-line diff (components/diff.go:78-103); no XDG support (compile-time constants).
+- Coverage targets (domain 100%, infra/application 90%+, cli 80%+, tui 70%+) are documented in .agents/rules/testing-guide.md but unenforced (no CI tests).
 
 ## Related Documentation
 
