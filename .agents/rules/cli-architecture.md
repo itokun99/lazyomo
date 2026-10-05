@@ -1,274 +1,121 @@
-# CLI Architecture Guide - omo-switch
+# CLI Architecture Guide - lazyomo
 
 ## Architecture Overview
 
-omo-switch is a CLI/TUI application for switching oh-my-openagent configs. It uses a clean architecture pattern with clear separation of concerns.
+lazyomo is a TUI editor for `~/.omo/omo.jsonc`. It uses a short chain with clear ownership at each step.
+
+```
+cmd/lazyomo -> internal/tui -> internal/editor -> internal/omodit
+```
+
+There is no switching, no config discovery, and no CLI verb surface in v1. The binary opens the editor, the TUI renders panes and dialogs, `editor` enforces the editable scope and validation, and `omodit` owns the comment-preserving JSONC document plus atomic save with backup.
 
 ## Package Structure
 
 ```
-cmd/omo-switch/main.go          # Entry point - dependency injection
+cmd/lazyomo/main.go          # Entry point, minimal dispatch
 internal/
-├── domain/                     # Pure business logic - NO I/O
-│   ├── config.go              # Config struct + Validate()
-│   ├── group.go               # Group struct + KnownGroups
-│   └── schema.go              # SchemaValidator interface
-├── application/                # Orchestration layer
-│   └── service.go             # ConfigService
-├── infrastructure/             # I/O implementations
-│   ├── filesystem.go          # Store interface + FilesystemStore
-│   └── backup.go              # BackupManager interface + FilesystemBackupManager
-├── cli/                        # CLI mode handler
-│   └── handler.go             # Handle() + cmd* functions
-└── tui/                        # Bubble Tea TUI
-    ├── app.go                 # App model (tea.Model)
-    ├── keys.go                # Key bindings
-    ├── styles.go              # Lipgloss styles
-    └── components/            # 9 leaf components
-        ├── list.go            # Config list
-        ├── search.go          # Search filter
-        ├── detail.go          # Config detail
-        ├── diff.go            # Diff viewer
-        ├── backup.go          # Backup manager
-        ├── validate.go        # Validation results
-        ├── help.go            # Help overlay
-        ├── info.go            # Config info
-        └── status.go          # Status bar
+├── omodit/                     # JSONC engine: Load, Get, Set, Add, Remove, Save
+│   └── omodit.go
+├── editor/                     # Editable surface: sections, entries, validation, dirty set
+│   ├── editor.go
+│   ├── edit.go
+│   └── validate.go
+└── tui/                        # Bubble Tea editor UI
+    ├── model.go                # Model plus Editor interface (consumer side)
+    ├── update.go               # Key handling
+    ├── view.go                 # Three-zone layout plus overlays
+    └── styles.go               # Lipgloss styles
 ```
+
+Deleted switcher packages stay deleted: `internal/domain`, `internal/application`, `internal/infrastructure`, `internal/cli` do not exist. Do not reintroduce `ConfigService`, `KnownGroups`, `FilesystemStore`, or `omo_configs` paths.
 
 ## Dependency Flow
 
 ```
 main.go
-├── cli.Handle(service, args, w)
-│   └── service.ListConfigs(), service.SwitchConfig(), etc.
-│       ├── store.ListConfigs(), store.ReadConfig()
-│       └── backup.CreateBackup(), backup.ListBackups()
-└── tui.NewApp(service)
-    └── service.ListConfigs(), service.SwitchConfig(), etc.
-        ├── store.ListConfigs(), store.ReadConfig()
-        └── backup.CreateBackup(), backup.ListBackups()
+└── editor.LoadDefault()            # ~/.omo/omo.jsonc
+└── tui.New(ed)
+    └── Model holds an Editor interface (real *editor.Editor, fake in tests)
+        └── SetScalar, ToggleBool, AddEntry, RemoveEntry
+        └── DirtyPaths, Save, Reload
+            └── omodit.Document: Get, Set, Add, Remove, Save
 ```
 
-## Entry Point (main.go)
+Interfaces sit next to the consumer. `internal/tui/model.go` declares the `Editor` interface it needs instead of importing editor internals. `editor` is the only package that imports `omodit`. The TUI never touches `omodit` directly.
+
+## Entry Point (cmd/lazyomo/main.go)
 
 ```go
-func main() {
-    args := os.Args[1:]
-
-    // Manual dependency injection
-    store := infrastructure.NewFilesystemStore()
-    backup := infrastructure.NewFilesystemBackupManager()
-    validator := domain.DefaultValidator{}
-    service := application.NewConfigService(store, backup, validator)
-
-    // Route: no args → TUI, --cli → CLI
-    if len(args) == 0 {
-        app := tui.NewApp(service)
-        p := tea.NewProgram(app, tea.WithAltScreen())
-        p.Run()
-        return
-    }
-
-    if args[0] == "--cli" {
-        args = args[1:]
-    }
-
-    exitCode := cli.Handle(service, args, os.Stdout)
-    os.Exit(exitCode)
-}
+ed, err := editor.LoadDefault()   // ~/.omo/omo.jsonc
+p := tea.NewProgram(tui.New(ed), tea.WithAltScreen())
+_, err = p.Run()
 ```
 
-## CLI Mode (internal/cli/handler.go)
+The launcher accepts no args (open the editor) plus `--help` / `-h` (print usage). Unknown args fail with usage text. If edit verbs return later, keep this manual dispatch style: switch on `args[0]`, pass explicit deps, return errors to `main` for `Error: ...` output.
 
-### Command Dispatch
+## Editor (internal/editor/)
+
+`editor` implements the v1 editable surface from `docs/spec-editor-v1.md` on top of `omodit`:
+
+| Section | What it covers |
+|---------|----------------|
+| `models` | Alias add/remove, `model`, `reasoning` |
+| `model_profiles` | Profile add/remove, `display_name`, `models` chain, plus the `model_profile` picker |
+| `agents` | `model`, `models` chain, `reasoning`, `disable`, overlay add/remove |
+| `categories` | `model`, `models` chain (fixed set of 10) |
+| `telemetry` | `enabled` toggle |
+
+Every mutation validates path and value before touching the document, so bad input leaves memory and disk untouched. Edits accumulate in a dirty path set. `Save` writes atomically with a timestamped backup, `Reload` drops unsaved edits.
+
+TUI-facing surface (see `model.go` for the exact interface):
 
 ```go
-func Handle(service *application.ConfigService, args []string, w io.Writer) int {
-    if len(args) == 0 {
-        return cmdList(service, w)
-    }
-
-    switch args[0] {
-    case "--list", "-l":
-        return cmdList(service, w)
-    case "--current", "-c":
-        return cmdCurrent(service, w)
-    case "--help", "-h":
-        return cmdHelp(w)
-    case "show":
-        if len(args) < 2 {
-            fmt.Fprintln(w, "Error: show requires an alias argument")
-            return 1
-        }
-        return cmdShow(service, args[1], w)
-    default:
-        return cmdSwitch(service, args[0], w)
-    }
-}
+Path() string
+Sections() []editor.Section
+Detail(section editor.SectionID, key string) (editor.Detail, error)
+SetScalar(path, value string) error
+ToggleBool(path string) error
+AddEntry(section editor.SectionID, key string) error
+RemoveEntry(section editor.SectionID, key string) error
+DirtyPaths() []string
+Save() (string, error)   // returns backup name on success
+Reload() error
 ```
 
-### Command Function Pattern
+Blocked deletes (alias still referenced, profile still selected) fail with an inline-displayable error. The file is never written mid-edit.
+
+## Omodit (internal/omodit/)
+
+`omodit` loads, edits, and saves JSONC while preserving comments, key order, and formatting outside the edited subtree. It parses once with hujson, applies RFC 6902 patches, and packs back bytes identical to the input wherever nothing changed.
 
 ```go
-func cmdXxx(service *application.ConfigService, w io.Writer) int {
-    // 1. Call service method
-    result, err := service.Xxx()
-    if err != nil {
-        fmt.Fprintf(w, "Error: %v\n", err)
-        return 1
-    }
-
-    // 2. Format output
-    fmt.Fprintf(w, "Result: %v\n", result)
-    return 0
-}
+doc, err := omodit.Load(path)
+v, ok := doc.Get("/models/k3/reasoning")
+err = doc.Set("/models/k3/reasoning", "high")
+err = doc.Add("/models/new-alias", ...)
+err = doc.Remove("/models/old-alias")
+err = doc.Save()   // backup, then atomic write
 ```
 
-## TUI Mode (internal/tui/)
+`Save` copies the pre-save file to `<config>.bak.<UTC timestamp>` next to the config, then writes via temp file plus rename. Pointers are RFC 6901 strings such as `/agents/sisyphus/model`.
 
-### Bubble Tea Architecture
+## TUI (internal/tui/)
 
-The TUI uses the Elm architecture:
-- **Model**: `App` struct (state)
-- **Update**: `App.Update(msg)` (state transitions)
-- **View**: `App.View()` (rendering)
+Bubble Tea Elm setup: `Model` in `model.go`, key handling in `update.go`, rendering in `view.go`, Lipgloss styles in `styles.go`.
 
-### View Modes
+Panes: Sections (left, 5 rows), Entries (main upper), Detail (main lower). Bottom lines: keybar plus status (`clean` or `dirty (n)`, path, filter, last message). Overlays: confirm, help, edit, add, error. Focus moves with `h`, `l`, `tab`, `shift+tab`, numbers jump to sections, `enter` drills or confirms, `esc` climbs back. Full keymap lives in `docs/spec-tui-v1.md` and the README.
 
-```go
-type ViewMode int
-
-const (
-    ViewList ViewMode = iota     // Default: config list
-    ViewDetail                   // Config detail view
-    ViewSearch                   // Search filter
-    ViewHelp                     // Help overlay
-    ViewBackup                   // Backup manager
-    ViewDiff                     // Diff viewer
-    ViewValidate                 // Validation results
-    ViewInfo                     // Config info
-)
-```
-
-### Message Types
-
-```go
-type configsLoadedMsg struct {
-    groups   []domain.Group
-    active   string
-    reloaded bool
-}
-
-type errMsg struct {
-    err error
-}
-
-type switchCompleteMsg struct {
-    alias string
-    err   error
-}
-
-// ... more message types
-```
-
-### Component Pattern
-
-Every component in `internal/tui/components/` follows:
-
-```go
-type FooModel struct {
-    // State fields
-    active bool
-    // ...
-}
-
-type FooStyles struct {
-    // Lipgloss styles
-    Header lipgloss.Style
-    // ...
-}
-
-func NewFooModel() FooModel {
-    return FooModel{}
-}
-
-func (m *FooModel) Render(styles FooStyles, width int) string {
-    // Render component
-}
-
-func (m *FooModel) Show(...) {
-    m.active = true
-}
-
-func (m *FooModel) Hide() {
-    m.active = false
-}
-
-func (m FooModel) IsActive() bool {
-    return m.active
-}
-```
-
-**CRITICAL**: Each component owns its own `Styles` struct to avoid circular imports.
-
-## Interfaces
-
-### Store (infrastructure/filesystem.go)
-
-```go
-type Store interface {
-    ListConfigs() (map[string]string, error)
-    GetConfig(alias string) (string, error)
-    ReadConfig(alias string) ([]byte, error)
-    WriteConfig(alias string, content []byte) error
-    ConfigDir() string
-    TargetPath() string
-}
-```
-
-### BackupManager (infrastructure/backup.go)
-
-```go
-type BackupManager interface {
-    CreateBackup() (string, error)
-    ListBackups() ([]BackupInfo, error)
-    RestoreBackup(timestamp string) error
-}
-```
-
-### SchemaValidator (domain/schema.go)
-
-```go
-type SchemaValidator interface {
-    Validate(content []byte) error
-    RequiredKeys() []string
-}
-```
+The TUI never writes files. It calls `editor` ops, renders returned errors inline or in status, and confirms save, reload, delete, and dirty quit through the confirm overlay.
 
 ## Config File Paths
 
 | Path | Purpose |
 |------|---------|
-| `~/.config/opencode/omo_configs/omo-*.json` | Config files (switching candidates) |
-| `~/.config/opencode/oh-my-openagent.json` | Active config (target) |
-| `~/.config/omo-switch/backups/oh-my-openagent.<timestamp>.json` | Backups |
+| `~/.omo/omo.jsonc` | The single live config (read and written) |
+| `~/.omo/omo.jsonc.bak.<UTC timestamp>` | Automatic pre-save backup, next to the config |
+| `~/.omo/agent/` | Credentials, never read or written by lazyomo |
 
 ## Key Bindings (TUI)
 
-| Key | Action |
-|-----|--------|
-| ↑/k | Move up |
-| ↓/j | Move down |
-| g/home | Jump to top |
-| G/end | Jump to bottom |
-| Enter | Switch config |
-| s | Show detail |
-| / | Search |
-| ? | Help |
-| v | Validate all |
-| b | Backup manager |
-| d | Diff viewer |
-| i | Config info |
-| r | Reload |
-| q/Esc | Quit |
+v1 keymap: `1-5` select sections, `0` swap main subpane, `j`/`k`/`h`/`l` move, `tab` / `shift+tab` cycle panes, `[` / `]` switch sections, `enter` drill or confirm, `esc` back, `e` edit, `a` add, `d` delete (confirm), `space` toggle bool, `s` save (confirm plus auto backup), `r` reload or discard (confirm when dirty), `/` filter, `?` help, `q` quit (confirm when dirty).

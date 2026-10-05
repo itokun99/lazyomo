@@ -1,0 +1,84 @@
+// lazyomo editor test fixture: comments everywhere on purpose.
+{
+  // schema pin (read-only in v1)
+  "$schema": "https://example.invalid/omo.schema.json",
+  "models": {
+    /* block comment before the first alias */
+    "k3": {
+      "model": "github-copilot/claude-sonnet-5", // primary model
+      "reasoning": "high",
+    },
+    // second alias carries a nested read-only option block
+    "spaceBunny": {
+      "model": "opencode-go/space-bunny-free",
+      "reasoning": "max",
+      "options": {
+        "temperature": 0.2,
+      },
+    },
+    // remaining aliases keep this fixture complete
+    "dsflash": {
+      "model": "opencode-go/deepseek-v4.1-flash",
+    },
+    "chainOnly": {
+      "model": "adacode/gpt-5-3",
+    },
+    "agentChain": {
+      "model": "adacode/gpt-5-3",
+    },
+    "catChain": {
+      "model": "adacode/gpt-5-3",
+    },
+    "spare": {
+      "model": "adacode/gpt-5-3",
+    },
+  },
+  // profiles select model lanes
+  "model_profiles": {
+    "daily": {
+      "display_name": "Daily Driver", // main lane
+      "models": [
+        "github-copilot/claude-sonnet-5:max",
+        "spaceBunny:max",
+        "chainOnly:high",
+      ], // daily chain ends here
+    },
+    "cheap": {
+      "display_name": "Low Cost",
+      "models": ["adacode/gpt-5-3"],
+    },
+  },
+  "model_profile": "daily", // active profile selector
+  "agents": {
+    "explore": {
+      "model": "spaceBunny", // overlay reference
+      "reasoning": "max",
+    },
+    "oracle": {
+      "model": "dsflash",
+    },
+    "librarian": {
+      "models": [
+        "agentChain",
+      ], // librarian fallback chain
+    },
+  },
+  "categories": {
+    "quick": {
+      "model": "k3",
+    },
+    "ultrabrain": {
+      "model": "adacode/claude-opus-4-6",
+      "models": [
+        "catChain",
+      ], // ultrabrain chain
+    },
+  },
+  "telemetry": {
+    "enabled": false, // telemetry toggle
+  },
+  "git_master": {
+    "commit_footer": false,
+    "include_co_authored_by": false,
+  },
+}

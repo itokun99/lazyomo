@@ -1,8 +1,8 @@
-# Bug Fix Workflow - omo-switch
+# Bug Fix Workflow - lazyomo
 
 ## Overview
 
-This document defines the systematic approach to investigating and fixing bugs in omo-switch.
+This document defines the systematic approach to investigating and fixing bugs in lazyomo.
 
 ## Bug Fix Process
 
@@ -15,8 +15,9 @@ This document defines the systematic approach to investigating and fixing bugs i
    - Steps to reproduce?
 
 2. Create minimal reproduction
-   - Use CLI mode for easier debugging
-   - Isolate the issue to specific command/feature
+   - Use editor or omodit tests for easier debugging
+   - Copy ~/.omo/omo.jsonc to a temp file, never the live one
+   - Isolate the issue to one op: Get, Set, ToggleBool, Add, Remove, Save
 
 3. Verify the bug exists
    - Run reproduction steps
@@ -32,10 +33,10 @@ This document defines the systematic approach to investigating and fixing bugs i
    - Identify where behavior diverges
 
 2. Check package boundaries
-   - Is the issue in domain logic?
-   - Is it in infrastructure I/O?
-   - Is it in application orchestration?
-   - Is it in CLI/TUI presentation?
+   - Is the issue in editor validation or scope rules?
+   - Is it in omodit parsing, pointers, save, or backup?
+   - Is it in TUI focus, overlay, or rendering?
+   - Is it in the cmd/lazyomo launcher?
 
 3. Identify root cause
    - Don't just find symptoms
@@ -76,30 +77,21 @@ This document defines the systematic approach to investigating and fixing bugs i
 
 ## Debugging Techniques
 
-### CLI Debugging
+### Launcher Debugging
 
 ```bash
-# Run specific command
-./omo-switch --list
-
-# Run with verbose output (if implemented)
-./omo-switch --verbose --list
+# Help text
+./lazyomo --help
 
 # Check exit code
 echo $?
 ```
 
+v1 has no other flags. Reproduce editor behavior in tests, not through CLI verbs (none exist).
+
 ### TUI Debugging
 
-TUI is harder to debug. Use CLI mode when possible:
-
-```bash
-# Force CLI mode
-./omo-switch --cli --list
-
-# Or use specific commands
-./omo-switch show claude
-```
+The TUI needs a terminal, so isolate first: reproduce the state change through `internal/editor` on a temp copy, then check focus plus overlay handling in `internal/tui` (`model.go`, `update.go`, `view.go`).
 
 ### Adding Debug Output
 
@@ -113,97 +105,71 @@ fmt.Fprintf(os.Stderr, "DEBUG: variable = %v\n", variable)
 
 ```go
 func TestDebugIssue(t *testing.T) {
-    // Setup specific scenario
-    mock := &mockStore{
-        configs: map[string]string{"test": "omo-test.json"},
-        content: map[string][]byte{"test": []byte(`{"invalid": true}`)},
-    }
-
-    service := newTestService(mock, nil)
-
-    // Test the specific operation
-    _, err := service.ListConfigs()
-    if err != nil {
-        t.Logf("Error: %v", err)
-    }
+    // Setup: copy a fixture to a temp file, load through the editor
+    dir := t.TempDir()
+    // write fixture, then:
+    // ed, err := editor.Load(filepath.Join(dir, "omo.jsonc"))
+    // Test one op, for example ed.SetScalar("/models/k3/reasoning", "high")
+    // and log the returned inline error
 }
 ```
 
 ## Common Bug Categories
 
-### Category 1: Config File Issues
+### Category 1: Load and Validation Issues
 
-**Symptoms**: Configs not found, invalid configs, wrong active config
-
-**Investigation**:
-```go
-// Check config directory
-store := infrastructure.NewFilesystemStore()
-configs, err := store.ListConfigs()
-fmt.Printf("Configs: %v, Error: %v\n", configs, err)
-
-// Check specific config
-content, err := store.ReadConfig("claude")
-fmt.Printf("Content: %s, Error: %v\n", content, err)
-```
-
-**Common causes**:
-- Wrong file path
-- Invalid JSON
-- Missing `agents` key
-- File permissions
-
-### Category 2: CLI Command Issues
-
-**Symptoms**: Wrong output, missing output, wrong exit code
+**Symptoms**: Launch fails, edit rejected, save refuses to write
 
 **Investigation**:
 ```go
-// Test command directly
-var buf bytes.Buffer
-code := cli.Handle(service, []string{"--list"}, &buf)
-fmt.Printf("Exit: %d, Output: %s\n", code, buf.String())
+// Load a temp copy through the editor and try one op
+// ed, _ := editor.Load(tmpPath)
+// err := ed.SetScalar("/models/k3/reasoning", "high")
+// fmt.Printf("Err: %v\n", err)
 ```
 
 **Common causes**:
-- Wrong argument parsing
-- Missing error handling
-- Wrong output format
+- Missing ~/.omo/omo.jsonc
+- Invalid JSONC syntax
+- Alias or `provider/model-id` shape wrong
+- Unknown category name or missing profile for `model_profile`
+
+### Category 2: Launcher Issues
+
+**Symptoms**: Wrong output, missing usage, wrong exit code
+
+**Common causes**:
+- Unknown args not echoing usage
+- Help text out of date with main.go
 
 ### Category 3: TUI Issues
 
-**Symptoms**: UI not rendering, wrong behavior, crashes
+**Symptoms**: UI not rendering, wrong focus, stuck popup, lost dirty marks
 
 **Investigation**:
-- Use CLI mode to isolate
-- Check ViewMode transitions
-- Check message handling
+- Reproduce the edit in `internal/editor` first to rule out validation
+- Check pane focus plus overlay exclusivity in update.go
+- Check dirty rendering and status text in view.go
 
 **Common causes**:
-- Wrong message type handling
-- Missing state updates
-- Wrong component lifecycle
+- Popup not taking all input
+- Focus order wrong across Sections, Entries, Detail
+- Status line not reflecting DirtyPaths
 
-### Category 4: Infrastructure Issues
+### Category 4: Save and Backup Issues
 
-**Symptoms**: File not found, permission errors, wrong paths
+**Symptoms**: No backup sibling, partial write, permissions error
 
 **Investigation**:
 ```go
-// Check paths
-store := infrastructure.NewFilesystemStore()
-fmt.Printf("ConfigDir: %s\n", store.ConfigDir())
-fmt.Printf("TargetPath: %s\n", store.TargetPath())
-
-// Check file existence
-_, err := os.Stat(store.TargetPath())
-fmt.Printf("Target exists: %v\n", err == nil)
+// Check the live path and its sibling backups (read-only inspection)
+// _, err := os.Stat(filepath.Join(home, ".omo", "omo.jsonc"))
 ```
 
 **Common causes**:
-- Wrong path construction
-- Missing directory creation
-- Permission issues
+- Saving while clean (by design: no backup, no write)
+- Directory not writable
+- Temp file plus rename interrupted
 
 ## Bug Fix Checklist
 
@@ -221,54 +187,32 @@ Before submitting fix:
 ## Example Bug Fix
 
 ### Bug Report
-"omo-switch shows wrong active config"
+"Toggling telemetry.enabled reports `not a bool` on a bool row"
 
 ### Investigation
 
 ```go
-// 1. Check how active config is determined
-func (s *ConfigService) GetActiveConfig() (string, error) {
-    targetContent, err := os.ReadFile(s.store.TargetPath())
-    // ...
-
-    for alias := range aliases {
-        content, err := s.store.ReadConfig(alias)
-        // ...
-        if string(content) == string(targetContent) {
-            return alias, nil
-        }
-    }
-    return "", nil
-}
-
-// 2. Issue: byte comparison is sensitive to whitespace
-// 3. Fix: normalize JSON before comparison
+// 1. Reproduce through the editor on a temp copy
+// err := ed.ToggleBool("/telemetry/enabled")
+// 2. Check: is the pointer right, is the stored value a JSON bool,
+//    does Detail classify the row as KindBool?
+// 3. Fix at the layer at fault: classification in editor,
+//    key handling in tui/update.go, or display in tui/view.go.
 ```
 
 ### Fix
 
 ```go
-// Normalize JSON before comparison
-func normalizeJSON(data []byte) ([]byte, error) {
-    var parsed interface{}
-    if err := json.Unmarshal(data, &parsed); err != nil {
-        return nil, err
-    }
-    return json.Marshal(parsed)
-}
+// Keep the fix minimal: correct the single misclassified path or key branch.
+// Validation stays before mutation, so bad input still leaves the doc untouched.
 ```
 
 ### Regression Test
 
 ```go
-func TestGetActiveConfig_WhitespaceInsensitive(t *testing.T) {
-    // Test with different whitespace in same JSON
-    target := []byte(`{"agents": {}}`)
-    config := []byte(`{
-        "agents": {}
-    }`)
-
-    // Should match despite whitespace differences
+func TestToggleTelemetryEnabled(t *testing.T) {
+    // Load fixture with telemetry.enabled=false, ToggleBool, expect true
+    // plus the path in DirtyPaths; Save then Reload round-trips it.
 }
 ```
 
@@ -289,11 +233,11 @@ go test -race ./...
 ### Verbose Tests
 
 ```bash
-go test -v ./internal/domain/...
+go test -v ./internal/editor/...
 ```
 
 ### Specific Test
 
 ```bash
-go test -run TestGetActiveConfig ./internal/application/...
+go test -run TestToggleTelemetry ./internal/editor/...
 ```

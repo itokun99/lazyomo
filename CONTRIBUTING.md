@@ -1,18 +1,18 @@
-# Contributing to omo-switch
+# Contributing to lazyomo
 
 ## Development Setup
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/itokun99/omo-switch.git
-   cd omo-switch
+   git clone https://github.com/itokun99/lazyomo.git
+   cd lazyomo
    ```
 
 2. Install Go 1.22+
 
 3. Build:
    ```bash
-   go build -o omo-switch ./cmd/omo-switch
+   go build -o lazyomo ./cmd/lazyomo
    ```
 
 4. Run tests:
@@ -23,7 +23,7 @@
 ## Project Structure
 
 ```
-├── cmd/omo-switch/     # Entry point
+├── cmd/lazyomo/     # Entry point
 ├── internal/
 │   ├── domain/         # Business models (Config, Group, Schema)
 │   ├── application/    # Service layer (ConfigService)

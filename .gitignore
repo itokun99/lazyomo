@@ -3,7 +3,7 @@
 *.dll
 *.so
 *.dylib
-omo-switch
-omo-switch.exe
+/lazyomo
+/lazyomo.exe
 vendor/
 .env

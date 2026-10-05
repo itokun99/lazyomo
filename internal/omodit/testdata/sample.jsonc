@@ -1,0 +1,32 @@
+{
+  // Top-level line comment before models
+  "models": {
+    /* block comment before k3 */
+    "k3": {
+      "reasoning": true, // trailing line comment on reasoning
+      "name": "model // not a comment",
+    },
+    // line comment before k4
+    "k4": {
+      "enabled": false,
+    },
+  }, // trailing comment after models object
+  "telemetry": {
+    "enabled": true, // telemetry toggle
+  },
+  // Escaped keys for pointer tests: "a/b" holds "c~d"
+  "a/b": {
+    "c~d": "escaped",
+  },
+  "servers": [
+    // leading comment for server list
+    {
+      "name": "a", // server a name
+      "url": "http://a",
+    },
+    {
+      "name": "b",
+      "url": "http://b",
+    },
+  ],
+}

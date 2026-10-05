@@ -2,64 +2,65 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Styles holds all Lipgloss styles for the TUI.
+// Styles holds every lipgloss style for the TUI. Colors extend the
+// previous palette: green marks focus, blue marks selection, gray
+// marks unfocused chrome, red marks errors and dirty dots.
 type Styles struct {
-	// Colors
-	Primary   lipgloss.Color
-	Secondary lipgloss.Color
-	Accent    lipgloss.Color
-	Error     lipgloss.Color
-	Muted     lipgloss.Color
-
-	// Component styles
 	Title    lipgloss.Style
-	Subtitle lipgloss.Style
-	Active   lipgloss.Style
-	Inactive lipgloss.Style
-	Status   lipgloss.Style
 	Help     lipgloss.Style
 	ErrorMsg lipgloss.Style
-	Border   lipgloss.Style
+	Status   lipgloss.Style
+	Keybar   lipgloss.Style
+
+	FocusBorder lipgloss.Style
+	BlurBorder  lipgloss.Style
+	PaneTitle   lipgloss.Style
+	Selected    lipgloss.Style
+	Normal      lipgloss.Style
+	DirtyDot    lipgloss.Style
+	OverlayBox  lipgloss.Style
 }
 
 // DefaultStyles returns the default styles.
 func DefaultStyles() Styles {
+	focused := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("42")).
+		Bold(true)
+	blurred := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("241"))
 	return Styles{
-		Primary:   lipgloss.Color("60"),  // Purple
-		Secondary: lipgloss.Color("229"), // Light yellow
-		Accent:    lipgloss.Color("212"), // Pink
-		Error:     lipgloss.Color("196"), // Red
-		Muted:     lipgloss.Color("241"), // Gray
-
 		Title: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("60")),
-
-		Subtitle: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("229")),
-
-		Active: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("42")), // Green
-
-		Inactive: lipgloss.NewStyle().
+		Help: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")),
-
+		ErrorMsg: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("196")),
 		Status: lipgloss.NewStyle().
 			Padding(0, 1).
 			Background(lipgloss.Color("60")).
 			Foreground(lipgloss.Color("230")),
-
-		Help: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")),
-
-		ErrorMsg: lipgloss.NewStyle().
+		Keybar: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("229")),
+		FocusBorder: focused,
+		BlurBorder:  blurred,
+		PaneTitle: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("229")),
+		Selected: lipgloss.NewStyle().
+			Background(lipgloss.Color("27")).
+			Foreground(lipgloss.Color("230")),
+		Normal: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("250")),
+		DirtyDot: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("196")),
-
-		Border: lipgloss.NewStyle().
+		OverlayBox: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("60")),
+			BorderForeground(lipgloss.Color("42")).
+			Padding(1, 2),
 	}
 }

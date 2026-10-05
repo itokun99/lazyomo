@@ -20,23 +20,32 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26.3'
 
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      # Asset naming contract (shared with scripts/install.js and Formula/lazyomo.rb):
+      # lazyomo-darwin-amd64, lazyomo-darwin-arm64, lazyomo-linux-amd64,
+      # lazyomo-linux-arm64, lazyomo-windows-amd64.exe, lazyomo-windows-arm64.exe
       - name: Build
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          binary_name="omo-switch"
+          asset="lazyomo-${GOOS}-${GOARCH}"
           if [ "$GOOS" = "windows" ]; then
-            binary_name="omo-switch.exe"
+            asset="${asset}.exe"
           fi
-          go build -o "dist/${binary_name}" ./cmd/omo-switch
+          go build -o "dist/${asset}" ./cmd/lazyomo
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: omo-switch-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: lazyomo-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
 
   release:

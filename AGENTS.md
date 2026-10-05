@@ -5,21 +5,21 @@
 **Branch:** main
 
 ## OVERVIEW
-omo-switch - CLI/TUI switcher for oh-my-openagent configs. Go 1.26.3 + Charm stack (Bubble Tea/Bubbles/Lipgloss), clean architecture (domain -> application -> infrastructure -> cli/tui), manual CLI dispatch. The npm package `@indrawandev/omo-switch` ships `bin/omo-switch.js`, a complete JS re-implementation of the same CLI.
+lazyomo - CLI/TUI switcher for oh-my-openagent configs. Go 1.26.3 + Charm stack (Bubble Tea/Bubbles/Lipgloss), clean architecture (domain -> application -> infrastructure -> cli/tui), manual CLI dispatch. The npm package `@indrawandev/lazyomo` ships `bin/lazyomo.js`, a complete JS re-implementation of the same CLI.
 
 ## STRUCTURE
 ```
-omo-switcher/
+lazyomo/
 ├── internal/domain/           # pure types + rules (Config, groups, schema) - no I/O
 ├── internal/infrastructure/   # Store + BackupManager impls (hardcoded ~/.config paths)
 ├── internal/application/      # ConfigService orchestrator
 ├── internal/cli/              # Handle() manual dispatch
 ├── internal/tui/              # Bubble Tea app shell -> tui/AGENTS.md
 │   └── components/            # 9 leaf renderers -> components/AGENTS.md
-├── cmd/omo-switch/            # MISSING from tree - see NOTES
-├── bin/omo-switch.js          # npm launcher + JS fallback implementation
+├── cmd/lazyomo/            # MISSING from tree - see NOTES
+├── bin/lazyomo.js          # npm launcher + JS fallback implementation
 ├── scripts/                   # build.sh/.bat, install.js (npm postinstall)
-└── Formula/omo-switch.rb      # Homebrew formula (downloads release binaries)
+└── Formula/lazyomo.rb      # Homebrew formula (downloads release binaries)
 ```
 
 ## WHERE TO LOOK
@@ -53,7 +53,7 @@ omo-switcher/
 - Tests: stdlib `testing` only (no testify); table-driven + `t.Run`; hand-written mocks with compile-time checks (`var _ X = (*mockX)(nil)`); black-box `_test` packages only for application + cli.
 - Test seams: `NewX()` derives `$HOME` paths; `NewXWithPath(...)` accepts `t.TempDir()` (filesystem.go:39, backup.go:46).
 - TUI components: contract lives in internal/tui/components/AGENTS.md (each component owns its Styles; leaf nodes).
-- Paths (no XDG): configs `~/.config/opencode/omo_configs/omo-<alias>.json`, active `~/.config/opencode/oh-my-openagent.json`, backups `~/.config/omo-switch/backups/oh-my-openagent.<ts>.json`; dirs 0o755, files 0o644.
+- Paths (no XDG): configs `~/.config/opencode/omo_configs/omo-<alias>.json`, active `~/.config/opencode/oh-my-openagent.json`, backups `~/.config/lazyomo/backups/oh-my-openagent.<ts>.json`; dirs 0o755, files 0o644.
 - Group display order is the hardcoded `knownGroupNames()` slice (Mono, Optimized, Low-Cost, Custom) because `KnownGroups` is a map (service.go:33); CLI sorts Custom alphabetically.
 
 ## ANTI-PATTERNS (THIS PROJECT)
@@ -70,7 +70,7 @@ omo-switcher/
 No TODO/FIXME/HACK/DEPRECATED markers exist in Go code - debt lives in this file and prose docs only.
 
 ## UNIQUE STYLES
-- Dual implementation: the Go tree (internal/) and a complete JS fallback (bin/omo-switch.js) that duplicates paths, KNOWN_GROUPS, and schema validation.
+- Dual implementation: the Go tree (internal/) and a complete JS fallback (bin/lazyomo.js) that duplicates paths, KNOWN_GROUPS, and schema validation.
 - "Active config" detection is content comparison: target file vs every omo-*.json (service.go:78-103; same in the JS impl). Editing the active file in place breaks detection until a switch.
 - `FilesystemStore.WriteConfig` exists but is never called by the service; `SwitchConfig` writes the target with a direct `os.WriteFile` (service.go:123).
 - First-run gotcha: `SwitchConfig` requires an existing target file - `backup.CreateBackup` errors when the target is missing (backup.go:55), so switching with no active config fails.
@@ -80,14 +80,14 @@ No TODO/FIXME/HACK/DEPRECATED markers exist in Go code - debt lives in this file
 go test ./...        # 6/6 packages pass - the only working quality gate
 go vet ./...         # clean
 go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out
-go build -o omo-switch ./cmd/omo-switch   # FAILS: cmd/ absent from the tree
-go install github.com/itokun99/omo-switch/cmd/omo-switch@latest   # same missing target
+go build -o lazyomo ./cmd/lazyomo   # FAILS: cmd/ absent from the tree
+go install github.com/itokun99/lazyomo/cmd/lazyomo@latest   # same missing target
 ```
 
 ## NOTES
-- **`cmd/omo-switch/main.go` is missing** - there is no `package main` anywhere, and no `cmd/` in git history. Yet scripts/build.sh:6, scripts/build.bat, .github/workflows/release.yml:34, README and CONTRIBUTING all reference it. Restore the wiring documented at .agents/rules/cli-architecture.md:53-80 before any build work.
+- **`cmd/lazyomo/main.go` is missing** - there is no `package main` anywhere, and no `cmd/` in git history. Yet scripts/build.sh:6, scripts/build.bat, .github/workflows/release.yml:34, README and CONTRIBUTING all reference it. Restore the wiring documented at .agents/rules/cli-architecture.md:53-80 before any build work.
 - CI (`release.yml`) runs on `v*` tags only: builds the missing path, runs no tests/vet, pins Go 1.22 while go.mod requires 1.26.3.
-- Version skew: scripts/install.js pins `v2.0.0` vs package.json/Formula `2.0.1`; npm repo URL uses `omo-switcher` while the Go module path and install REPO use `omo-switch`.
+- Version skew: scripts/install.js pins `v2.0.0` vs package.json/Formula `2.0.1`. Naming is now unified: module, repo, and npm name are all lazyomo variants.
 - Debt: duplicate `targetPath` literal (filesystem.go:34, backup.go:41); `mockStore`/`mockBackupManager` duplicated between service_test.go and handler_test.go; naive line-by-line diff (components/diff.go:78-103); no XDG support (compile-time constants).
 - Coverage targets (domain 100%, infra/application 90%+, cli 80%+, tui 70%+) are documented in .agents/rules/testing-guide.md but unenforced (no CI tests).
 

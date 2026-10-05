@@ -1,6 +1,6 @@
 @echo off
-echo Building omo-switch...
+echo Building lazyomo...
 
-go build -o omo-switch.exe ./cmd/omo-switch
+go build -o lazyomo.exe ./cmd/lazyomo
 
-echo Build complete: omo-switch.exe
+echo Build complete: lazyomo.exe

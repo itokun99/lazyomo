@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Repurpose lazyomo from config switcher to TUI editor for `~/.omo/omo.jsonc` (lazygit-style panes, section keymap, save with automatic timestamped backup).
+- Add `internal/editor` plus `internal/omodit` engine: comment-preserving JSONC load, Get, Set, Add, Remove, Save with atomic write and `<config>.bak.<UTC timestamp>` backup next to the file.
+- Remove old switcher packages (`internal/domain`, `internal/application`, `internal/infrastructure`, `internal/cli`): no switching, no `omo_configs` discovery, no `ConfigService` or `KnownGroups`.
+- Rename product from omo-switch to lazyomo (docs only, no behavior change).
+
 ## [2.0.0] - 2026-06-04
 
 ### Added

@@ -1,211 +1,117 @@
-# @indrawandev/omo-switch
+# lazyomo
 
-CLI/TUI switcher for [oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) configs.
+TUI editor for `~/.omo/omo.jsonc`, styled after lazygit.
 
-Instantly swap between different model configurations for opencode without manually copying files.
+It opens your live omo config in the terminal so you can browse sections, tweak models and routing, then save once. Nothing touches disk until you confirm save, and every save leaves a timestamped backup next to the file.
 
-## Installation
+## Layout
 
-### Go Binary (Recommended)
+Three zones, one screen. The left column lists five sections: Models, Model Profiles, Agents, Categories, Telemetry. The upper right pane lists entries for the selected section, one row per key with a type hint and a dirty dot when edited. The lower right pane previews the selected entry. Scalar values edit in place, nested JSON shows as indented text.
 
-```bash
-go install github.com/itokun99/omo-switch/cmd/omo-switch@latest
-```
+Two fixed lines sit at the bottom. The first is a keybar with keys that apply to the focused pane. The second is a status line with the file path, a clean or dirty counter, filter text, and the last message. Dialogs (edit, add, confirm, help, error) open centered on top and take all input until you confirm or dismiss them.
 
-### Homebrew
+Only one pane has focus at a time. The focused pane gets a green bold border, the rest stay gray, and the selected row uses a blue background. You'll mostly live in Sections, jump to Entries with a number key, and drill with enter.
 
-```bash
-brew tap itokun99/omo-switch
-brew install omo-switch
-```
+## Install
 
-### From Source
+Go install:
 
 ```bash
-git clone https://github.com/itokun99/omo-switch.git
-cd omo-switch
-go build -o omo-switch ./cmd/omo-switch
+go install github.com/itokun99/lazyomo/cmd/lazyomo@latest
 ```
 
-### npm
+Build from source:
 
 ```bash
-npm install -g @indrawandev/omo-switch
+git clone https://github.com/itokun99/lazyomo.git
+cd lazyomo
+go build -o lazyomo ./cmd/lazyomo
 ```
 
-### bun
+npm:
 
 ```bash
-bun install -g @indrawandev/omo-switch
+npm install -g @indrawandev/lazyomo
 ```
+
+Requires Go 1.26.3 or later for source builds.
 
 ## Usage
 
-### TUI Mode (Default)
-
 ```bash
-omo-switch
+lazyomo
 ```
 
-Opens an interactive terminal UI for browsing, searching, and switching configs. Use arrow keys or vim bindings to navigate. Press Enter to switch.
+It opens `~/.omo/omo.jsonc` in the editor. Pass `--help` to print usage. There are no other flags in v1.
 
-### CLI Mode (Backward Compatible)
+## Keymap
 
-```bash
-omo-switch --list          # List all configs
-omo-switch --current       # Show active config
-omo-switch claude          # Switch to claude config
-omo-switch show claude     # Show config content
-omo-switch --cli --list    # Explicit CLI mode
-```
-
-## Key Bindings
+Keys act on the focused pane unless noted.
 
 | Key | Action |
 |-----|--------|
-| ↑/k | Move up |
-| ↓/j | Move down |
-| g/home | Jump to top |
-| G/end | Jump to bottom |
-| Enter | Switch to config |
-| s | Show config detail |
-| / | Search configs |
-| ? | Toggle help |
-| v | Validate all configs |
-| b | Backup manager |
-| d | Diff viewer |
-| i | Config info |
-| r | Reload configs |
-| q/Esc | Quit |
+| `1` | Select Models, focus Entries |
+| `2` | Select Model Profiles, focus Entries |
+| `3` | Select Agents, focus Entries |
+| `4` | Select Categories, focus Entries |
+| `5` | Select Telemetry, focus Entries |
+| `0` | Focus the other main subpane (Entries or Detail) |
+| `j` | Move selection down |
+| `k` | Move selection up |
+| `h` | Focus pane to the left |
+| `l` | Focus pane to the right |
+| `tab` | Focus next pane |
+| `shift+tab` | Focus previous pane |
+| `[` | Previous section, keep focus |
+| `]` | Next section, keep focus |
+| `enter` | Drill in (Sections to Entries to Detail), confirm in dialogs |
+| `esc` | Step back (dialog to Detail to Entries to Sections) |
+| `e` | Edit selected scalar in a popup |
+| `a` | Add entry to current section |
+| `d` | Delete selected entry (asks to confirm) |
+| `space` | Toggle selected bool in place |
+| `s` | Save all changes (asks to confirm, writes backup automatically) |
+| `r` | Reload from disk (asks to confirm when dirty, reloads at once when clean) |
+| `/` | Filter Entries list (`esc` clears an empty filter) |
+| `?` | Open or close help |
+| `q` | Quit (asks to confirm when dirty) |
 
-## Features
+`space` on a non-bool row reports `not a bool` and changes nothing. `q` on a clean state quits at once.
 
-- **Auto-discovery** — scans `~/.config/opencode/omo_configs/omo-*.json`, no hardcoding needed
-- **Schema validation** — validates config has required `agents` key before applying
-- **Auto-backup** — backs up current active config to `~/.config/omo-switch/backups/` before every switch
-- **Grouped display** — configs grouped by Mono / Optimized / Low-Cost / Custom
-- **Interactive TUI** — browse, search, and switch configs with keyboard navigation
-- **Cross-platform** — builds for macOS, Linux, and Windows
+## Config and backups
 
-## Configuration
+The editor reads and writes a single file: `~/.omo/omo.jsonc`.
 
-Configs are stored in `~/.config/opencode/omo_configs/` as `omo-*.json` files.
+Each confirmed save first copies the pre-save file to a sibling backup named `<config>.bak.<UTC timestamp>`, for example `omo.jsonc.bak.2026-10-05T12-34-56-789Z`. Backups sit next to the config, never in another directory. `r` reloads from disk and drops unsaved edits (with confirm when dirty).
 
-The active config is at `~/.config/opencode/oh-my-openagent.json`.
+## What you can edit in v1
 
-Backups are stored in `~/.config/omo-switch/backups/`.
+| Section | Editable |
+|---------|----------|
+| `models.*` | Add or remove alias, edit `model`, edit `reasoning` |
+| `model_profiles.*` | Add or remove profile, edit `display_name`, edit `models` chain |
+| `model_profile` | Picker for the active profile (must match an existing profile) |
+| `agents.*` | Edit `model`, `models` chain, `reasoning`, `disable`; add or remove overlay entry |
+| `categories.*` | Edit `model`, `models` chain |
+| `telemetry.enabled` | Bool toggle |
 
-## Uninstall
+Everything else is read-only in v1. The Detail pane tags those values `(read-only)`, and edit keys there report `read-only section` instead of opening a popup. Credentials under `~/.omo/agent/` are never read or written by the editor.
 
-### Homebrew
+Validation runs before a change lands. Bad input keeps the popup open with a one-line reason, and a failed save leaves the file untouched.
 
-```bash
-brew uninstall omo-switch
-brew untap itokun99/omo-switch
-```
+## Safety
 
-### npm
+Edits stay in memory until you press `s`. The status line shows `clean` or `dirty (n)` so you always know what's pending. Save writes atomically: it creates the timestamped backup above, then replaces the file, preserving comments and key order outside the edited subtree. Cancel paths (`esc`, quit without saving, reload) never write.
 
-```bash
-npm uninstall -g @indrawandev/omo-switch
-```
-
-### bun
-
-```bash
-bun uninstall -g @indrawandev/omo-switch
-```
-
-### Go Binary
-
-```bash
-rm $(go env GOPATH)/bin/omo-switch
-```
-
-### From Source
+## Development
 
 ```bash
-rm /usr/local/bin/omo-switch  # or wherever you installed it
+go build -o lazyomo ./cmd/lazyomo
+go test ./...
+go vet ./...
 ```
 
-### Clean up data (optional)
-
-```bash
-rm -rf ~/.config/omo-switch/backups/  # Remove backups
-# Note: Config files in ~/.config/opencode/omo_configs/ are NOT removed
-```
-
-## Config Discovery
-
-`omo-switch` auto-discovers all `omo-*.json` files from `~/.config/opencode/omo_configs/`.
-
-Any file you add there with the `omo-` prefix will appear automatically under the **Custom** section — no config changes needed.
-
-```
-~/.config/opencode/omo_configs/
-├── omo-optimized-high.json     → optimized-high
-├── omo-optimized-medium.json   → optimized-medium
-├── omo-optimized-low.json      → optimized-low
-├── omo-lc-mode-low.json        → lc-mode-low
-├── omo-lc-mode-medium.json     → lc-mode-medium
-├── omo-lc-mode-high.json       → lc-mode-high
-├── omo-lc-mode-ultra.json      → lc-mode-ultra
-├── omo-minimax.json            → minimax
-├── omo-qwen.json               → qwen
-├── omo-deepseek.json           → deepseek
-├── omo-glm.json                → glm
-├── omo-gpt.json                → gpt
-├── omo-claude.json             → claude
-└── omo-my-custom.json          → my-custom  (Custom section)
-```
-
-## List Output
-
-```
-Available configs:
-
-  Mono
-    minimax              → omo-minimax.json
-    qwen                 → omo-qwen.json
-    deepseek             → omo-deepseek.json
-    glm                  → omo-glm.json
-    gpt                  → omo-gpt.json
-    claude               → omo-claude.json
-  Optimized
-    optimized-high       → omo-optimized-high.json ◀ active
-    optimized-medium     → omo-optimized-medium.json
-    optimized-low        → omo-optimized-low.json
-  Low-Cost
-    lc-mode-low          → omo-lc-mode-low.json
-    lc-mode-medium       → omo-lc-mode-medium.json
-    lc-mode-high         → omo-lc-mode-high.json
-    lc-mode-ultra        → omo-lc-mode-ultra.json
-  Custom
-    my-custom            → omo-my-custom.json
-```
-
-## Config File Format
-
-Each config file follows the oh-my-openagent schema:
-
-```json
-{
-  "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json",
-  "agents": {
-    "sisyphus": {
-      "model": "opencode-go/kimi-k2.6"
-    }
-  },
-  "categories": {
-    "deep": {
-      "model": "opencode-go/deepseek-v4-pro",
-      "variant": "medium"
-    }
-  }
-}
-```
-
-See the [oh-my-openagent agent model matching guide](https://github.com/code-yeongyu/oh-my-openagent/blob/dev/docs/guide/agent-model-matching.md) for model family recommendations per agent.
+See `docs/spec-tui-v1.md` for the UI spec and `docs/spec-editor-v1.md` for the editing scope.
 
 ## License
 

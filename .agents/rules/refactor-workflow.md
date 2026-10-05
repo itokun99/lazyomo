@@ -1,8 +1,8 @@
-# Refactoring Workflow - omo-switch
+# Refactoring Workflow - lazyomo
 
 ## Overview
 
-This document defines the safe refactoring approach for omo-switch.
+This document defines the safe refactoring approach for lazyomo.
 
 ## Refactoring Principles
 
@@ -89,131 +89,61 @@ This document defines the safe refactoring approach for omo-switch.
 
 **Before**:
 ```go
-func (s *ConfigService) ListConfigs() ([]domain.Group, error) {
-    aliases, err := s.store.ListConfigs()
-    if err != nil {
-        return nil, fmt.Errorf("listing configs: %w", err)
+func (e *Editor) Sections() []Section {
+    secs := e.sectionOrder()
+    out := make([]Section, 0, len(secs))
+    for _, id := range secs {
+        entries, ro := e.entriesFor(id)
+        out = append(out, Section{ID: id, Title: string(id), Entries: entries, ReadOnly: ro})
     }
-
-    groups := make(map[string]*domain.Group)
-    for _, name := range knownGroupNames() {
-        g := domain.NewGroup(name)
-        groups[name] = &g
-    }
-
-    for alias, filename := range aliases {
-        content, err := s.store.ReadConfig(alias)
-        if err != nil {
-            slog.Error("reading config", "alias", alias, "error", err)
-            continue
-        }
-        filePath := filepath.Join(s.store.ConfigDir(), filename)
-        cfg := domain.NewConfig(alias, filename, filePath, content)
-        cfg = cfg.Validate(s.validator)
-        groupName := domain.GetGroupForAlias(alias)
-        groups[groupName].AddConfig(cfg)
-    }
-
-    result := make([]domain.Group, 0, len(groups))
-    for _, name := range knownGroupNames() {
-        result = append(result, *groups[name])
-    }
-    return result, nil
+    return out
 }
 ```
 
 **After**:
 ```go
-func (s *ConfigService) ListConfigs() ([]domain.Group, error) {
-    aliases, err := s.store.ListConfigs()
-    if err != nil {
-        return nil, fmt.Errorf("listing configs: %w", err)
+func (e *Editor) Sections() []Section {
+    out := make([]Section, 0, len(e.sectionOrder()))
+    for _, id := range e.sectionOrder() {
+        out = append(out, e.buildSection(id))
     }
-
-    groups := s.initGroups()
-    s.populateGroups(groups, aliases)
-    return s.collectGroups(groups), nil
+    return out
 }
 
-func (s *ConfigService) initGroups() map[string]*domain.Group {
-    groups := make(map[string]*domain.Group)
-    for _, name := range knownGroupNames() {
-        g := domain.NewGroup(name)
-        groups[name] = &g
-    }
-    return groups
-}
-
-func (s *ConfigService) populateGroups(groups map[string]*domain.Group, aliases map[string]string) {
-    for alias, filename := range aliases {
-        content, err := s.store.ReadConfig(alias)
-        if err != nil {
-            slog.Error("reading config", "alias", alias, "error", err)
-            continue
-        }
-        filePath := filepath.Join(s.store.ConfigDir(), filename)
-        cfg := domain.NewConfig(alias, filename, filePath, content)
-        cfg = cfg.Validate(s.validator)
-        groupName := domain.GetGroupForAlias(alias)
-        groups[groupName].AddConfig(cfg)
-    }
-}
-
-func (s *ConfigService) collectGroups(groups map[string]*domain.Group) []domain.Group {
-    result := make([]domain.Group, 0, len(groups))
-    for _, name := range knownGroupNames() {
-        result = append(result, *groups[name])
-    }
-    return result
+func (e *Editor) buildSection(id SectionID) Section {
+    entries, ro := e.entriesFor(id)
+    return Section{ID: id, Title: string(id), Entries: entries, ReadOnly: ro}
 }
 ```
 
 ### Pattern 2: Extract Interface
 
-**Before**:
+The TUI already uses this: `internal/tui/model.go` declares the `Editor` interface it needs, and `cmd/lazyomo` wires the real `*editor.Editor`. Tests pass a fake. When new UI needs surface, extend that consumer-side interface first, then implement on `*editor.Editor`.
+
 ```go
-type ConfigService struct {
-    store     *infrastructure.FilesystemStore
-    backup    *infrastructure.FilesystemBackupManager
-    validator domain.SchemaValidator
+// in internal/tui/model.go
+type Editor interface {
+    DirtyPaths() []string
+    Save() (string, error)
+    Reload() error
+    // ...
 }
 ```
 
-**After**:
-```go
-type ConfigService struct {
-    store     infrastructure.Store
-    backup    infrastructure.BackupManager
-    validator domain.SchemaValidator
-}
-```
+### Pattern 3: Move Function to the Right Package
 
-### Pattern 3: Move Function to Different Package
-
-**Before** (in application/service.go):
-```go
-func knownGroupNames() []string {
-    return []string{"Mono", "Optimized", "Low-Cost", "Custom"}
-}
-```
-
-**After** (in domain/group.go):
-```go
-func KnownGroupNames() []string {
-    return []string{"Mono", "Optimized", "Low-Cost", "Custom"}
-}
-```
+File writes belong in `omodit`, scope rules in `editor`, rendering in `tui`. If save or backup logic drifts into `editor`, move it down into `omodit.Document.Save`. If a validation rule drifts into the TUI, move it up into `internal/editor/validate.go` so bad input still leaves the document untouched.
 
 ### Pattern 4: Rename for Clarity
 
 **Before**:
 ```go
-func (s *ConfigService) GetActiveConfig() (string, error) {
+func (e *Editor) Set(path, value string) error {
 ```
 
 **After**:
 ```go
-func (s *ConfigService) FindActiveConfigAlias() (string, error) {
+func (e *Editor) SetScalar(path, value string) error {
 ```
 
 ## Refactoring Checklist
@@ -252,21 +182,14 @@ After refactoring:
 
 **Example**:
 ```go
-// Before: duplicate path construction
-func (s *FilesystemStore) ReadConfig(alias string) ([]byte, error) {
-    path := filepath.Join(s.configDir, fmt.Sprintf("omo-%s.json", alias))
+// Before: pointer parsing copied in two editor methods
+func (e *Editor) SetScalar(path, value string) error {
+    tokens, err := parsePointer(path)
     // ...
 }
 
-func (s *FilesystemStore) WriteConfig(alias string, content []byte) error {
-    path := filepath.Join(s.configDir, fmt.Sprintf("omo-%s.json", alias))
-    // ...
-}
-
-// After: shared helper
-func (s *FilesystemStore) configPath(alias string) string {
-    return filepath.Join(s.configDir, fmt.Sprintf("omo-%s.json", alias))
-}
+// After: one shared helper beside the editor
+func parsePointer(pointer string) ([]string, error)
 ```
 
 ### Scenario 2: Long Function
@@ -279,17 +202,18 @@ func (s *FilesystemStore) configPath(alias string) string {
 
 **Example**:
 ```go
-// Before: 50-line function
-func (s *ConfigService) ListConfigs() ([]domain.Group, error) {
+// Before: 50-line Sections builder
+func (e *Editor) Sections() []Section {
     // ... 50 lines
 }
 
 // After: composed of smaller functions
-func (s *ConfigService) ListConfigs() ([]domain.Group, error) {
-    aliases := s.discoverConfigs()
-    groups := s.initGroups()
-    s.populateGroups(groups, aliases)
-    return s.collectGroups(groups), nil
+func (e *Editor) Sections() []Section {
+    out := make([]Section, 0, len(e.sectionOrder()))
+    for _, id := range e.sectionOrder() {
+        out = append(out, e.buildSection(id))
+    }
+    return out
 }
 ```
 
@@ -303,16 +227,9 @@ func (s *ConfigService) ListConfigs() ([]domain.Group, error) {
 
 **Example**:
 ```go
-// Before
-func NewConfigService(store *FilesystemStore, ...) *ConfigService {
-
-// After
-type Store interface {
-    ListConfigs() (map[string]string, error)
-    // ...
-}
-
-func NewConfigService(store Store, ...) *ConfigService {
+// Before: TUI holds a concrete *editor.Editor, tests can't fake it
+// After: TUI declares Editor interface in model.go, cmd wires the real one
+func New(ed Editor) *Model
 ```
 
 ### Scenario 4: Move Code to Better Package
@@ -325,15 +242,8 @@ func NewConfigService(store Store, ...) *ConfigService {
 
 **Example**:
 ```go
-// Before: in application/service.go
-func knownGroupNames() []string {
-    return []string{"Mono", "Optimized", "Low-Cost", "Custom"}
-}
-
-// After: in domain/group.go
-func KnownGroupNames() []string {
-    return []string{"Mono", "Optimized", "Low-Cost", "Custom"}
-}
+// Before: chain validation inline in internal/tui/update.go
+// After: in internal/editor/validate.go, TUI renders the returned error
 ```
 
 ## Refactoring Anti-Patterns
@@ -400,7 +310,7 @@ go test -race ./...
 ### Build
 
 ```bash
-go build ./cmd/omo-switch
+go build ./cmd/lazyomo
 ```
 
 ### Manual Testing

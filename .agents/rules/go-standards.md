@@ -1,8 +1,8 @@
-# Go Engineering Standards - omo-switch
+# Go Engineering Standards - lazyomo
 
 ## Overview
 
-This document defines Go coding standards specific to the omo-switch project.
+This document defines Go coding standards specific to the lazyomo project.
 
 ## Package Design
 
@@ -10,20 +10,16 @@ This document defines Go coding standards specific to the omo-switch project.
 
 | Package | Responsibility | I/O | Dependencies |
 |---------|---------------|-----|--------------|
-| domain | Pure business logic | None | None |
-| application | Orchestration | Via interfaces | domain, infrastructure |
-| infrastructure | I/O implementations | Filesystem | domain (types only) |
-| cli | CLI handler | stdout | application, domain |
-| tui | TUI interface | stdin/stdout | application, domain, infrastructure |
+| omodit | JSONC engine, atomic save plus backup | Filesystem (one file) | hujson only |
+| editor | Editable surface, validation, dirty set | Via omodit | omodit |
+| tui | Bubble Tea editor UI | stdin/stdout | editor types (consumer-side interface) |
 
 ### Package Boundaries
 
 ```
-domain/ → NO imports from other internal packages
-application/ → imports domain/ + infrastructure/
-infrastructure/ → imports domain/ types only
-cli/ → imports application/ + domain/
-tui/ → imports application/ + domain/ + infrastructure/
+cmd/lazyomo -> internal/tui -> internal/editor -> internal/omodit
+editor is the only package that imports omodit
+tui declares the Editor interface it needs in model.go, never imports omodit
 ```
 
 ### Package Naming
@@ -38,32 +34,31 @@ tui/ → imports application/ + domain/ + infrastructure/
 
 ```go
 // Always wrap with context
-fmt.Errorf("listing configs: %w", err)
+fmt.Errorf("saving config: %w", err)
 
 // Pattern: "verb-ing noun: %w"
-fmt.Errorf("reading config %q: %w", alias, err)
-fmt.Errorf("writing target config: %w", err)
+fmt.Errorf("loading config %s: %w", path, err)
+fmt.Errorf("setting %q: %w", pointer, err)
 fmt.Errorf("backup failed: %w", err)
 ```
 
 ### Error Propagation
 
 ```
-Infrastructure → Application → CLI/TUI
-  ↓                ↓              ↓
-wrap system    add context    user-facing
-errors         with %w        message
+omodit → editor → tui / cmd
+  ↓         ↓          ↓
+wrap system validate   user-facing
+errors   before mutate message or status line
 ```
 
 ### User-Facing Errors
 
 ```go
-// CLI
-fmt.Fprintf(w, "Error: %v\n", err)
-return 1
+// cmd/lazyomo
+fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+os.Exit(1)
 
-// TUI
-a.status.SetMessage("Error: " + msg.err.Error())
+// TUI: inline in Detail or popup, short note in status; dirty marks stay on failure
 ```
 
 ### Graceful Degradation
@@ -82,7 +77,7 @@ if os.IsNotExist(err) {
 Use `log/slog` (standard library):
 
 ```go
-slog.Error("reading config", "alias", alias, "error", err)
+slog.Error("save failed", "path", path, "error", err)
 ```
 
 ### Logging Levels
@@ -96,7 +91,7 @@ slog.Error("reading config", "alias", alias, "error", err)
 
 ```go
 slog.Error("operation failed",
-    "operation", "list_configs",
+    "operation", "save",
     "error", err,
 )
 ```
@@ -106,18 +101,21 @@ slog.Error("operation failed",
 ### Config Paths
 
 ```go
-// Default paths
+// Single live file plus sibling backups
 home, _ := os.UserHomeDir()
-configDir := filepath.Join(home, ".config", "opencode", "omo_configs")
-targetPath := filepath.Join(home, ".config", "opencode", "oh-my-openagent.json")
-backupDir := filepath.Join(home, ".config", "omo-switch", "backups")
+path := filepath.Join(home, ".omo", "omo.jsonc")
+// backup: <config>.bak.<UTC timestamp>, for example
+// omo.jsonc.bak.2026-10-05T12-34-56-789Z
 ```
 
-### Config File Naming
+Credentials under `~/.omo/agent/` are never read or written.
+
+### JSON Pointers
 
 ```go
-// Pattern: omo-<alias>.json
-filename := fmt.Sprintf("omo-%s.json", alias)
+// RFC 6901 pointers into the live config
+doc.Get("/models/k3/reasoning")
+doc.Set("/agents/sisyphus/model", "acme/code-large")
 ```
 
 ## Struct Design
@@ -138,19 +136,13 @@ func NewFoo(field1 string, field2 int) *Foo {
 }
 ```
 
-### Immutable Validation
+### Validate Before Mutate
 
 ```go
-// Validate returns a new copy, doesn't modify original
-func (c Config) Validate(validator SchemaValidator) Config {
-    // Create new Config with validation result
-    return Config{
-        Alias:    c.Alias,
-        FileName: c.FileName,
-        // ...
-        IsValid:  true,
-    }
-}
+// editor rejects bad path or value before touching the document:
+// invalid input returns an inline-displayable error, file untouched
+func (e *Editor) SetScalar(path, value string) error
+func (e *Editor) ToggleBool(path string) error
 ```
 
 ## Interface Design
@@ -160,24 +152,24 @@ func (c Config) Validate(validator SchemaValidator) Config {
 Define interfaces in the package that USES them:
 
 ```go
-// infrastructure/filesystem.go - defines Store interface
-type Store interface {
-    ListConfigs() (map[string]string, error)
-    // ...
-}
-
-// application/service.go - uses Store interface
-type ConfigService struct {
-    store infrastructure.Store
-    // ...
+// internal/tui/model.go declares what the UI needs
+type Editor interface {
+    Path() string
+    Sections() []editor.Section
+    SetScalar(path, value string) error
+    ToggleBool(path string) error
+    AddEntry(section editor.SectionID, key string) error
+    RemoveEntry(section editor.SectionID, key string) error
+    DirtyPaths() []string
+    Save() (string, error)
+    Reload() error
 }
 ```
 
 ### Compile-Time Checks
 
 ```go
-var _ SchemaValidator = DefaultValidator{}
-var _ Store = (*FilesystemStore)(nil)
+var _ Editor = (*editor.Editor)(nil)
 ```
 
 ## Naming Conventions
@@ -192,7 +184,7 @@ var _ Store = (*FilesystemStore)(nil)
 
 - Use CamelCase for exported functions
 - Use camelCase for unexported functions
-- Prefix command functions with `cmd` (CLI)
+- Prefix launcher functions with `cmd` plus `run` in cmd/lazyomo only
 
 ### Constants
 
@@ -251,7 +243,7 @@ import (
     "github.com/charmbracelet/bubbletea"
 
     // Internal
-    "github.com/itokun99/omo-switch/internal/domain"
+    "github.com/itokun99/lazyomo/internal/editor"
 )
 ```
 
@@ -304,7 +296,7 @@ func TestFoo(t *testing.T) {
 ### Build
 
 ```bash
-go build -o omo-switch ./cmd/omo-switch
+go build -o lazyomo ./cmd/lazyomo
 ```
 
 ### Run Tests
@@ -312,7 +304,7 @@ go build -o omo-switch ./cmd/omo-switch
 ```bash
 go test ./...
 go test -cover ./...
-go test -v ./internal/domain/...
+go test -v ./internal/editor/...
 ```
 
 ### Lint

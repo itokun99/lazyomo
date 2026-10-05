@@ -1,8 +1,8 @@
-# AI Workflow - Development Guidelines for omo-switch
+# AI Workflow - Development Guidelines for lazyomo
 
 ## Overview
 
-This document defines the AI-assisted development workflow for the omo-switch project. It ensures consistent, high-quality contributions from any AI agent.
+This document defines the AI-assisted development workflow for the lazyomo project. It ensures consistent, high-quality contributions from any AI agent.
 
 ## Pre-Development Checklist
 
@@ -19,8 +19,9 @@ Before writing ANY code:
 
 ```
 1. Identify the task type:
-   - New CLI command → Read COMMAND_GUIDELINES.md
-   - New TUI component → Read CLI_ARCHITECTURE.md
+   - Launcher verb (if any) → Read COMMAND_GUIDELINES.md
+   - New TUI pane or dialog → Read CLI_ARCHITECTURE.md
+   - Editable field or rule → Read PROVIDER_INTEGRATION_GUIDE.md plus docs/spec-editor-v1.md
    - Bug fix → Read BUGFIX_WORKFLOW.md
    - Refactor → Read REFACTOR_WORKFLOW.md
    - New test → Read TESTING_GUIDE.md
@@ -50,54 +51,53 @@ Before writing ANY code:
 ```
 1. Run `go test ./...` - all tests must pass
 2. Run `go vet ./...` - no warnings
-3. Run `go build ./cmd/omo-switch` - compiles successfully
+3. Run `go build ./cmd/lazyomo` - compiles successfully
 4. Manual verification if applicable
 ```
 
 ## Task-Specific Workflows
 
-### Adding a New CLI Command
+### Adding a Launcher Verb
+
+v1 ships no switcher verbs. The launcher opens the editor or prints help. If a verb returns:
 
 ```
 1. Read COMMAND_GUIDELINES.md
-2. Add case in internal/cli/handler.go Handle()
-3. Create cmdXxx() function following existing pattern
-4. Add tests in handler_test.go
-5. Update help text in cmdHelp()
-6. Run: go test ./internal/cli/...
+2. Add case in cmd/lazyomo dispatch (keep manual switch, no Cobra)
+3. Route through internal/editor, never around it
+4. Update usage text in main.go
+5. Add tests beside the changed package
+6. Run: go test ./... plus go build ./cmd/lazyomo
 ```
 
-### Adding a New TUI Component
+### Changing a TUI Pane or Dialog
 
 ```
 1. Read CLI_ARCHITECTURE.md (TUI section)
-2. Create component in internal/tui/components/
-3. Follow FooModel/FooStyles pattern
-4. Add ViewMode constant in app.go
-5. Add key binding in keys.go
-6. Add handler in app.go handleKey()
-7. Add render logic in View()
-8. Create test file with table-driven tests
-9. Run: go test ./internal/tui/...
+2. Edit internal/tui/model.go, update.go, or view.go (no components/ dir exists)
+3. Keep the consumer-side Editor interface in model.go accurate
+4. Keep overlay handling (confirm, help, edit, add, error) exclusive: popup takes all input
+5. Create or update table-driven tests in tui_test.go
+6. Run: go test ./internal/tui/...
 ```
 
-### Adding a New Config Group
+### Adding an Editable Field
 
 ```
-1. Edit internal/domain/group.go
-2. Add entry to KnownGroups map
-3. Update tests in group_test.go
-4. Run: go test ./internal/domain/...
+1. Read docs/spec-editor-v1.md plus PROVIDER_INTEGRATION_GUIDE.md
+2. Add the path rule in internal/editor/edit.go or validate.go
+3. Surface it in Sections or Detail as the spec directs
+4. Update tests in internal/editor/
+5. Run: go test ./internal/editor/... ./internal/omodit/...
 ```
 
 ### Modifying Validation Logic
 
 ```
-1. Edit internal/domain/schema.go
-2. Update DefaultValidator.Validate()
-3. Update RequiredKeys() if needed
-4. Update tests in schema_test.go
-5. Run: go test ./internal/domain/...
+1. Edit internal/editor/validate.go
+2. Keep the convention: invalid input returns an inline error, document untouched
+3. Update tests beside the editor
+4. Run: go test ./internal/editor/...
 ```
 
 ## Error Recovery
@@ -115,7 +115,7 @@ Before marking task complete:
 
 - [ ] All tests pass (`go test ./...`)
 - [ ] No vet warnings (`go vet ./...`)
-- [ ] Build succeeds (`go build ./cmd/omo-switch`)
+- [ ] Build succeeds (`go build ./cmd/lazyomo`)
 - [ ] Package boundaries respected
 - [ ] Existing patterns followed
 - [ ] Tests added/updated for changes
@@ -124,11 +124,12 @@ Before marking task complete:
 
 | Mistake | Why It's Wrong | How to Avoid |
 |---------|---------------|--------------|
-| Adding I/O to domain | Breaks architecture | Check AGENTS.md Rule 1 |
-| Using Cobra | Project uses manual dispatch | Check AGENTS.md Rule 3 |
-| Sharing styles | Causes circular imports | Check AGENTS.md Rule 4 |
-| External test frameworks | Inconsistent conventions | Check AGENTS.md Rule 5 |
-| Creating new packages | Over-engineering | Use existing packages |
+| File writes outside omodit Save | Breaks atomic plus backup habit | Route all writes through editor Save |
+| TUI importing omodit | Skips validation and dirty tracking | Talk to the Editor interface only |
+| Touching ~/.omo/agent/ | Credentials stay out of scope | Edit omo.jsonc keys only |
+| Using Cobra | Project keeps manual dispatch | Check cli-architecture entry section |
+| External test frameworks | Inconsistent conventions | Use stdlib testing only |
+| Creating new packages | Over-engineering | Use editor, omodit, or tui |
 | Skipping tests | Quality regression | Always write tests |
 
 ## Reference Files

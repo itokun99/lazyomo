@@ -1,12 +1,12 @@
 {
-  "name": "@indrawandev/omo-switch",
-  "version": "2.0.1",
-  "description": "CLI/TUI switcher for oh-my-openagent configs",
+  "name": "@indrawandev/lazyomo",
+  "version": "3.0.0",
+  "description": "lazyomo — Go TUI editor for oh-my-openagent (omo) configs",
   "author": "Indrawan <me@indrawan.dev>",
   "license": "MIT",
   "private": false,
   "bin": {
-    "omo-switch": "./bin/omo-switch"
+    "lazyomo": "./bin/lazyomo.js"
   },
   "scripts": {
     "postinstall": "node scripts/install.js"
@@ -17,17 +17,18 @@
     "opencode",
     "oh-my-openagent",
     "omo",
-    "config",
-    "switcher"
+    "lazyomo",
+    "tui",
+    "config"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/itokun99/omo-switcher.git"
+    "url": "git+https://github.com/itokun99/lazyomo.git"
   },
   "bugs": {
-    "url": "https://github.com/itokun99/omo-switcher/issues"
+    "url": "https://github.com/itokun99/lazyomo/issues"
   },
-  "homepage": "https://github.com/itokun99/omo-switcher#readme",
+  "homepage": "https://github.com/itokun99/lazyomo#readme",
   "engines": {
     "node": ">=18"
   },

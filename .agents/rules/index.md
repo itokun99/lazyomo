@@ -1,14 +1,14 @@
-# AI Agent Rules - omo-switch
+# AI Agent Rules - lazyomo
 
-This directory contains documentation for AI agents working on the omo-switch project.
+This directory contains documentation for AI agents working on the lazyomo project.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | [ai-workflow.md](ai-workflow.md) | Development workflow for AI-assisted development |
-| [cli-architecture.md](cli-architecture.md) | CLI/TUI architecture details |
-| [command-guidelines.md](command-guidelines.md) | Standards for creating CLI commands |
+| [cli-architecture.md](cli-architecture.md) | TUI plus editor chain details |
+| [command-guidelines.md](command-guidelines.md) | Launcher usage plus style for future verbs |
 | [go-standards.md](go-standards.md) | Go engineering standards |
 | [testing-guide.md](testing-guide.md) | Testing patterns and conventions |
 | [bugfix-workflow.md](bugfix-workflow.md) | Bug investigation and fixing workflow |
@@ -25,21 +25,20 @@ This directory contains documentation for AI agents working on the omo-switch pr
 ## Architecture Summary
 
 ```
-cmd/omo-switch/main.go          # Entry point
+cmd/lazyomo/main.go          # Entry point (open editor or --help)
 internal/
-├── domain/                     # Pure business logic (no I/O)
-├── application/                # ConfigService orchestrator
-├── infrastructure/             # Filesystem I/O
-├── cli/                        # CLI handler
-└── tui/                        # Bubble Tea TUI
-    └── components/             # UI components
+├── omodit/                   # JSONC engine (Load, Get, Set, Add, Remove, Save)
+├── editor/                   # Editable surface, validation, dirty set
+└── tui/                      # Bubble Tea editor UI (model, update, view, styles)
 ```
+
+Single file edited: `~/.omo/omo.jsonc`. Backups are siblings named `<config>.bak.<UTC timestamp>`. No switching, no discovery, no `ConfigService` or `KnownGroups`.
 
 ## Key Rules
 
-1. **Package boundaries**: domain → application → infrastructure → cli/tui
-2. **No I/O in domain**: Pure business logic only
-3. **Interface-based DI**: All infrastructure via interfaces
-4. **Manual dispatch**: No Cobra, no CLI frameworks
+1. **Chain**: `cmd/lazyomo` -> `internal/tui` -> `internal/editor` -> `internal/omodit`; TUI never touches `omodit` directly
+2. **No writes until save**: edits stay in the dirty set; `Save` backs up then writes atomically
+3. **Validate before mutate**: bad path or value returns an inline error, document untouched
+4. **Consumer-side interfaces**: TUI declares the `Editor` interface it needs
 5. **Table-driven tests**: Standard testing package only
 6. **Error wrapping**: `fmt.Errorf("context: %w", err)`

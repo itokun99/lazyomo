@@ -1,353 +1,94 @@
-# Provider Integration Guide - omo-switch
+# Provider Integration Guide - lazyomo
 
 ## Overview
 
-This document defines standards for integrating new AI providers or config types into omo-switch.
+lazyomo edits one file, `~/.omo/omo.jsonc`. Providers appear as `provider/model` strings inside `models`, `model_profiles` chains, `agents`, and `categories`. There is no per-provider config file, no discovery directory, and no switch flow. To point an agent at a new provider, you edit the alias or chain that agent resolves to.
 
-## Current Architecture
-
-omo-switch manages config files for oh-my-openagent. Each config file:
-- Lives in `~/.config/opencode/omo_configs/omo-*.json`
-- Has an alias (filename without `omo-` prefix and `.json` suffix)
-- Contains JSON with at least an `agents` key
-- Gets classified into a group (Mono, Optimized, Low-Cost, Custom)
-
-## Adding a New Config Type
-
-### Step 1: Create Config File
-
-Create a new JSON file in the config directory:
-
-```bash
-# Example: adding a new provider config
-cat > ~/.config/opencode/omo_configs/omo-newprovider.json << 'EOF'
-{
-  "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json",
-  "agents": {
-    "sisyphus": {
-      "model": "newprovider/model-name"
-    }
-  },
-  "categories": {
-    "deep": {
-      "model": "newprovider/deep-model",
-      "variant": "medium"
-    }
-  }
-}
-EOF
-```
-
-### Step 2: Verify Discovery
-
-omo-switch auto-discovers configs:
-
-```bash
-# List all configs
-./omo-switch --list
-
-# Check if new config appears
-./omo-switch show newprovider
-```
-
-### Step 3: Add to Known Group (Optional)
-
-If the config should be in a specific group, edit `internal/domain/group.go`:
-
-```go
-var KnownGroups = map[string][]string{
-    "Mono":      {"minimax", "qwen", "deepseek", "glm", "gpt", "claude"},
-    "Optimized": {"optimized-high", "optimized-medium", "optimized-low"},
-    "Low-Cost":  {"lc-mode-low", "lc-mode-medium", "lc-mode-high", "lc-mode-ultra"},
-    "NewGroup":  {"newprovider", "newprovider-alt"},  // Add here
-}
-```
-
-### Step 4: Update Tests
-
-Update tests in `internal/domain/group_test.go`:
-
-```go
-func TestGetGroupForAlias(t *testing.T) {
-    tests := []struct {
-        name  string
-        alias string
-        want  string
-    }{
-        // ... existing tests
-        {name: "newprovider in NewGroup", alias: "newprovider", want: "NewGroup"},
-    }
-    // ...
-}
-```
-
-## Config File Schema
-
-### Required Fields
-
-```json
-{
-  "agents": {
-    "agent-name": {
-      "model": "provider/model-name"
-    }
-  }
-}
-```
-
-### Optional Fields
-
-```json
-{
-  "$schema": "https://...",
-  "agents": { ... },
-  "categories": {
-    "category-name": {
-      "model": "provider/model-name",
-      "variant": "low|medium|high"
-    }
-  }
-}
-```
-
-### Validation
-
-The `DefaultValidator` in `internal/domain/schema.go` checks:
-- JSON is valid
-- `agents` key exists
-
-To add custom validation:
-
-```go
-// In domain/schema.go
-func (v DefaultValidator) Validate(content []byte) error {
-    var parsed map[string]any
-    if err := json.Unmarshal(content, &parsed); err != nil {
-        return fmt.Errorf("invalid json: %w", err)
-    }
-
-    if _, ok := parsed["agents"]; !ok {
-        return fmt.Errorf("missing required key: agents")
-    }
-
-    // Add custom validation here
-    // ...
-
-    return nil
-}
-```
-
-## Adding a New Group
-
-### Step 1: Define Group
-
-In `internal/domain/group.go`:
-
-```go
-var KnownGroups = map[string][]string{
-    // ... existing groups
-    "NewGroup": {"alias1", "alias2", "alias3"},
-}
-```
-
-### Step 2: Update Display Order
-
-In `internal/application/service.go`:
-
-```go
-func knownGroupNames() []string {
-    return []string{"Mono", "Optimized", "Low-Cost", "NewGroup", "Custom"}
-}
-```
-
-### Step 3: Update Tests
-
-Update all tests that check group counts or ordering.
-
-## Config File Naming Convention
+## Current Model
 
 ```
-omo-<alias>.json
+~/.omo/omo.jsonc
+├── models.<alias>.model            # "provider/model-id", e.g. "acme/code-large"
+├── models.<alias>.reasoning        # low, medium, high, max, or empty
+├── model_profiles.<name>.models[]  # fallback chain of "provider/model:suffix"
+├── model_profile                   # active profile key
+├── agents.<name>.model             # alias or full "provider/model-id"
+├── agents.<name>.models[]          # optional fallback chain
+└── categories.<name>.model         # alias or full "provider/model-id"
 ```
 
-Where `<alias>` is:
-- Lowercase
-- Hyphens for multi-word names
-- No spaces or special characters
+Credentials live under `~/.omo/agent/` and are never touched by the editor. Provider auth, pricing, and per-provider params are read-only in v1.
 
-Examples:
-- `omo-claude.json` → alias: `claude`
-- `omo-optimized-high.json` → alias: `optimized-high`
-- `omo-lc-mode-low.json` → alias: `lc-mode-low`
+## Pointing an Agent at a New Provider
 
-## Active Config Detection
+### Step 1: Add or reuse a model alias
 
-omo-switch determines the active config by:
-1. Reading `~/.config/opencode/oh-my-openagent.json`
-2. Comparing content with each discovered config
-3. Returning the alias of the matching config
+In the TUI: select Models, press `a`, name the alias (`^[a-zA-Z0-9_-]+$`, max 32 chars), then edit its `model` field to the full `provider/model-id` string.
 
-**Important**: Content comparison is byte-for-byte. Whitespace differences will cause mismatch.
+Rules for `model` values: non-empty, must match `<provider>/<model-id>` shape. Chain elements allow an optional `:suffix` kept verbatim (for example `acme/code-large:max`).
 
-## Backup System
+### Step 2: Route the agent or category to it
 
-Before each switch, omo-switch:
-1. Creates backup of current active config
-2. Stores in `~/.config/omo-switch/backups/`
-3. Names as `oh-my-openagent.<timestamp>.json`
+Edit `/agents/<name>/model` to the alias or to the full `provider/model-id` string. Optionally set `/agents/<name>/models` to a fallback chain (min length 1 when present, order kept, no dedup). Categories work the same minus `disable`: `/categories/<name>/model` plus optional `/categories/<name>/models`.
 
-Backup is automatic and cannot be disabled.
+Unknown category names are rejected in v1. The set is fixed at 10: `architect`, `artistry`, `deep-high`, `deep-low`, `quick`, `ultrabrain`, `unspecified-high`, `unspecified-low`, `visual-engineering`, `writing`.
+
+### Step 3: Save
+
+Press `s`, confirm, and the editor validates, writes a timestamped backup next to the config, then saves atomically. Bad values keep the popup open with a one-line reason and the file stays untouched.
+
+## Value Rules
+
+| Field | Rule |
+|-------|------|
+| Alias or profile key | `^[a-zA-Z0-9_-]+$`, unique in section, max 32 chars |
+| `model` | Non-empty `provider/model-id`; agents and categories also accept an existing alias |
+| Chain element | `provider/model` with optional `:suffix`, kept verbatim |
+| `reasoning` | One of `low`, `medium`, `high`, `max`, or empty (unset) |
+| `display_name` | Non-empty string, max 64 chars |
+| `model_profile` | Must equal an existing `model_profiles` key |
+| `telemetry.enabled` | Strict bool, toggled with `space` |
+
+Deletes are blocked while referenced: an alias in use by `agents`, `categories`, or a profile chain can't be removed until retargeted, and the selected profile can't be deleted while `model_profile` points at it.
+
+## Validation
+
+`internal/editor/validate.go` owns these rules, enforced before `omodit` is touched. To extend them, add a check there plus a table case in the editor tests, and keep the convention: invalid input returns an inline-displayable error and leaves the document untouched.
 
 ## Integration Testing
 
-### Test New Config
-
 ```bash
-# Create test config
-echo '{"agents":{"test":{}}}' > ~/.config/opencode/omo_configs/omo-test.json
+# Build and run the editor against a copy
+go build -o lazyomo ./cmd/lazyomo
+cp ~/.omo/omo.jsonc /tmp/omo-test.jsonc
 
-# Verify discovery
-./omo-switch --list
-
-# Verify switching
-./omo-switch test
-./omo-switch --current
-
-# Verify content
-./omo-switch show test
+# Exercise the engine in tests
+go test ./internal/editor/... ./internal/omodit/...
 ```
 
-### Test Validation
-
-```bash
-# Invalid config (missing agents)
-echo '{"invalid":true}' > ~/.config/opencode/omo_configs/omo-bad.json
-
-# Should show validation error
-./omo-switch --list
-```
-
-## Common Integration Patterns
-
-### Pattern 1: Model Family Configs
-
-For configs with same provider but different models:
-
-```json
-{
-  "omo-provider-fast.json": {
-    "agents": { "sisyphus": { "model": "provider/fast-model" } }
-  },
-  "omo-provider-quality.json": {
-    "agents": { "sisyphus": { "model": "provider/quality-model" } }
-  }
-}
-```
-
-### Pattern 2: Cost Tier Configs
-
-For configs organized by cost:
-
-```json
-{
-  "omo-budget.json": {
-    "agents": { "sisyphus": { "model": "provider/cheap-model" } }
-  },
-  "omo-premium.json": {
-    "agents": { "sisyphus": { "model": "provider/premium-model" } }
-  }
-}
-```
-
-### Pattern 3: Use Case Configs
-
-For configs organized by use case:
-
-```json
-{
-  "omo-coding.json": {
-    "agents": { "sisyphus": { "model": "provider/code-model" } }
-  },
-  "omo-writing.json": {
-    "agents": { "sisyphus": { "model": "provider/write-model" } }
-  }
-}
-```
-
-## Extending Validation
-
-To add provider-specific validation:
-
-### Option 1: Modify DefaultValidator
-
-```go
-func (v DefaultValidator) Validate(content []byte) error {
-    // ... existing validation
-
-    // Provider-specific validation
-    agents, ok := parsed["agents"].(map[string]any)
-    if ok {
-        for name, agent := range agents {
-            agentMap, ok := agent.(map[string]any)
-            if !ok {
-                continue
-            }
-            if _, ok := agentMap["model"]; !ok {
-                return fmt.Errorf("agent %q missing model", name)
-            }
-        }
-    }
-
-    return nil
-}
-```
-
-### Option 2: Create Custom Validator
-
-```go
-type ProviderValidator struct{}
-
-func (v ProviderValidator) Validate(content []byte) error {
-    // Custom validation logic
-}
-
-func (v ProviderValidator) RequiredKeys() []string {
-    return []string{"agents"}
-}
-```
-
-Then inject in main.go:
-
-```go
-validator := ProviderValidator{}
-service := application.NewConfigService(store, backup, validator)
-```
+Manual path: open the TUI, add an alias, point one agent at it, press `s`, confirm the backup sibling appears, then `r` or reopen to confirm the values stuck. Never test against credentials; `~/.omo/agent/` stays out of scope.
 
 ## Troubleshooting
 
-### Config Not Appearing
+### Edit rejected
 
-1. Check filename matches `omo-*.json` pattern
-2. Check file is in `~/.config/opencode/omo_configs/`
-3. Check file is valid JSON
-4. Run `./omo-switch --list` to see all discovered configs
+Check the inline reason: alias shape, `provider/model-id` shape, empty chain, unknown category, or `model_profile` with no matching profile. Fix the value, confirm again.
 
-### Validation Failing
+### Delete blocked
 
-1. Check JSON syntax
-2. Check `agents` key exists
-3. Run `./omo-switch show <alias>` to see content
-4. Check for typos in key names
+The entry is still referenced. Retarget the agents, categories, or chains that point at it first, then delete.
 
-### Switching Not Working
+### Save left no backup
 
-1. Check config passes validation
-2. Check file permissions
-3. Check target file (`oh-my-openagent.json`) is writable
-4. Check backup directory exists
+Save only writes when dirty. A clean save flashes `already saved` and skips both backup and write. Make an edit first.
+
+### File not found on launch
+
+`editor.LoadDefault` reads `~/.omo/omo.jsonc` via `os.UserHomeDir`. Create or restore that file first; the editor doesn't provision a fresh config in v1.
 
 ## Reference
 
-- [AGENTS.md](../AGENTS.md) - Master AI rules
-- [cli-architecture.md](cli-architecture.md) - Architecture details
+- [cli-architecture.md](cli-architecture.md) - Chain, packages, and save flow
 - [go-standards.md](go-standards.md) - Go coding standards
+- `docs/spec-editor-v1.md` - Editable scope and engine contract
+- `docs/spec-tui-v1.md` - Panes and keymap

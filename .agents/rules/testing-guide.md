@@ -1,8 +1,8 @@
-# Testing Guide - omo-switch
+# Testing Guide - lazyomo
 
 ## Overview
 
-This document defines testing standards for the omo-switch project.
+This document defines testing standards for the lazyomo project.
 
 ## Test Framework
 
@@ -14,22 +14,19 @@ import "testing"
 
 ## Test File Organization
 
-| Layer | File | Package | Access |
-|-------|------|---------|--------|
-| Domain | `*_test.go` | `domain` | Unexported |
-| Infrastructure | `*_test.go` | `infrastructure` | Unexported |
-| Application | `*_test.go` | `application_test` | Exported only |
-| CLI | `*_test.go` | `cli_test` | Exported only |
-| TUI | `*_test.go` | `tui` | Unexported |
-| Components | `*_test.go` | `components` | Unexported |
+| Package | File | Notes |
+|-------|------|-------|
+| omodit | `omodit_test.go` plus `testdata/` | Engine: parse, pointers, save plus backup |
+| editor | `editor_test.go` plus `testdata/` | Surface: sections, validation, dirty set |
+| tui | `tui_test.go` | UI with a fake Editor (see `Editor` interface in model.go) |
 
 ## Test Naming Conventions
 
 ```go
-func TestNewConfig(t *testing.T)                    // Constructor
-func TestConfig_Validate(t *testing.T)              // Method
-func TestConfig_Validate_InvalidJSON(t *testing.T)  // Specific case
-func TestFilesystemStore_ListConfigs(t *testing.T)  // Interface method
+func TestLoad(t *testing.T)                          // Constructor
+func TestDocument_Set(t *testing.T)                  // Engine method
+func TestEditor_SetScalar_InvalidModel(t *testing.T) // Surface rule
+func TestModel_Update(t *testing.T)                  // TUI behavior
 ```
 
 ## Table-Driven Tests
@@ -73,45 +70,15 @@ func TestFoo(t *testing.T) {
 }
 ```
 
-## Mock Pattern
+## Fake Pattern
 
-### Hand-Written Mocks
-
-```go
-type mockStore struct {
-    configs map[string]string
-    content map[string][]byte
-    listErr error
-    readErr map[string]error
-}
-
-func (m *mockStore) ListConfigs() (map[string]string, error) {
-    if m.listErr != nil {
-        return nil, m.listErr
-    }
-    return m.configs, nil
-}
-
-func (m *mockStore) ReadConfig(alias string) ([]byte, error) {
-    if err, ok := m.readErr[alias]; ok {
-        return nil, err
-    }
-    return m.content[alias], nil
-}
-
-// Compile-time interface check
-var _ infrastructure.Store = (*mockStore)(nil)
-```
-
-### Error Injection
+The TUI tests use a fake `Editor` (the interface in `internal/tui/model.go`), not the real `*editor.Editor`. Hand-write it, keep it small, and add a compile-time check:
 
 ```go
-type mockStore struct {
-    listErr error      // Error for ListConfigs
-    readErr map[string]error  // Per-config errors
-    // ...
-}
+var _ Editor = (*fakeEditor)(nil)
 ```
+
+Error injection means returning errors from fake methods (save failure, blocked delete) and asserting the popup or status text.
 
 ## Test Helpers
 
@@ -129,12 +96,13 @@ func writeTestFile(t *testing.T, path, content string) {
 }
 ```
 
-### Service Constructor for Tests
+### Editor Constructor for Tests
 
 ```go
-func newTestService(store *mockStore, backup *mockBackupManager) *application.ConfigService {
-    return application.NewConfigService(store, backup, domain.DefaultValidator{})
-}
+// Load a temp copy through the editor, never the live file
+dir := t.TempDir()
+writeTestFile(t, filepath.Join(dir, "omo.jsonc"), fixture)
+ed, err := editor.Load(filepath.Join(dir, "omo.jsonc"))
 ```
 
 ## Fixtures
@@ -151,12 +119,11 @@ var (
 ### Temporary Directories
 
 ```go
-func TestFilesystemStore_ListConfigs(t *testing.T) {
+func TestEditor_SetScalar(t *testing.T) {
     dir := t.TempDir()
-    writeTestFile(t, filepath.Join(dir, "omo-test.json"), `{"agents":{}}`)
+    writeTestFile(t, filepath.Join(dir, "omo.jsonc"), `{...}`)
 
-    store := infrastructure.NewFilesystemStoreWithPath(dir, "")
-    configs, err := store.ListConfigs()
+    ed, err := editor.Load(filepath.Join(dir, "omo.jsonc"))
     // ...
 }
 ```
@@ -173,120 +140,27 @@ go tool cover -html=coverage.out
 
 ### Coverage Expectations
 
-- Domain layer: 100% coverage expected
-- Infrastructure layer: 90%+ coverage expected
-- Application layer: 90%+ coverage expected
-- CLI layer: 80%+ coverage expected
-- TUI layer: 70%+ coverage expected
+- omodit engine: 90%+ coverage expected
+- editor surface: 90%+ coverage expected
+- tui: 70%+ coverage expected
 
-## Testing Each Layer
+## Testing Each Package
 
-### Domain Tests
+### Omodit Tests
 
 ```go
-func TestConfig_Validate(t *testing.T) {
+func TestDocument_Set(t *testing.T) {
     tests := []struct {
         name      string
-        content   []byte
-        wantValid bool
+        pointer   string
+        value     any
+        wantErr   bool
     }{
-        {name: "valid", content: validJSON, wantValid: true},
-        {name: "invalid json", content: []byte("bad"), wantValid: false},
-        {name: "missing agents", content: []byte("{}"), wantValid: false},
+        {name: "scalar", pointer: "/models/k3/reasoning", value: "high"},
+        {name: "missing path errors", pointer: "/models/nope/model", value: "x", wantErr: true},
     }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            cfg := domain.NewConfig("test", "test.json", "/path", tt.content)
-            cfg = cfg.Validate(domain.DefaultValidator{})
-            if cfg.IsValid != tt.wantValid {
-                t.Errorf("IsValid = %v, want %v", cfg.IsValid, tt.wantValid)
-            }
-        })
-    }
+    // Load fixture from testdata or temp dir, apply op, compare Bytes or Get
 }
-```
-
-### Infrastructure Tests
-
-```go
-func TestFilesystemStore_ListConfigs(t *testing.T) {
-    tests := []struct {
-        name    string
-        files   []string
-        want    map[string]string
-        wantErr bool
-    }{
-        {
-            name:  "discovers omo-*.json files",
-            files: []string{"omo-test.json", "other.json"},
-            want:  map[string]string{"test": "omo-test.json"},
-        },
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            dir := t.TempDir()
-            for _, f := range tt.files {
-                writeTestFile(t, filepath.Join(dir, f), "{}")
-            }
-
-            store := infrastructure.NewFilesystemStoreWithPath(dir, "")
-            got, err := store.ListConfigs()
-            // ...
-        })
-    }
-}
-```
-
-### Application Tests
-
-```go
-func TestListConfigs(t *testing.T) {
-    mock := &mockStore{
-        configs: map[string]string{"test": "omo-test.json"},
-        content: map[string][]byte{"test": validJSON},
-    }
-
-    service := newTestService(mock, nil)
-    groups, err := service.ListConfigs()
-    // ...
-}
-```
-
-### CLI Tests
-
-```go
-func TestHandleList(t *testing.T) {
-    mock := &mockStore{
-        configs: map[string]string{"test": "omo-test.json"},
-        content: map[string][]byte{"test": validJSON},
-    }
-
-    service := newTestService(mock, nil)
-    var buf bytes.Buffer
-    code := cli.Handle(service, []string{"--list"}, &buf)
-
-    if code != 0 {
-        t.Errorf("Handle() = %d, want 0", code)
-    }
-    // ...
-}
-```
-
-### TUI Tests
-
-```go
-func TestApp_Update(t *testing.T) {
-    mock := &mockConfigService{
-        groups: []domain.Group{...},
-        active: "test",
-    }
-
-    app := tui.NewApp(mock)
-    // Test Update() with various messages
-}
-```
 
 ## Running Tests
 
@@ -295,13 +169,13 @@ func TestApp_Update(t *testing.T) {
 go test ./...
 
 # Specific package
-go test ./internal/domain/...
+go test ./internal/editor/...
 
 # Verbose
 go test -v ./...
 
 # Specific test
-go test -run TestConfig_Validate ./internal/domain/...
+go test -run TestEditor_SetScalar ./internal/editor/...
 
 # With coverage
 go test -cover ./...
@@ -316,12 +190,12 @@ go test -race ./...
 
 ```go
 t.Run("error case", func(t *testing.T) {
-    mock := &mockStore{listErr: errors.New("error")}
-    service := newTestService(mock, nil)
-
-    _, err := service.ListConfigs()
+    err := ed.SetScalar("/models/bad alias!/model", "x")
     if err == nil {
         t.Error("expected error, got nil")
+    }
+    if len(ed.DirtyPaths()) != 0 {
+        t.Error("failed edit must leave the dirty set empty")
     }
 })
 ```
@@ -336,13 +210,14 @@ func TestFoo(t *testing.T) {
 }
 ```
 
-### Testing JSON Content
+### Testing JSONC Content
 
 ```go
-var validJSON = []byte(`{
+var validFixture = []byte(`{
+    // comment preserved by omodit
     "agents": {
         "sisyphus": {
-            "model": "opencode-go/kimi-k2.6"
+            "model": "acme/code-large"
         }
     }
 }`)

@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-echo "Building omo-switch..."
+echo "Building lazyomo..."
 
-go build -o omo-switch ./cmd/omo-switch
+go build -o lazyomo ./cmd/lazyomo
 
-echo "Build complete: ./omo-switch"
+echo "Build complete: ./lazyomo"

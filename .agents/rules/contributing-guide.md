@@ -1,8 +1,8 @@
-# Contributing Guide - omo-switch
+# Contributing Guide - lazyomo
 
 ## Welcome
 
-This guide helps new developers (human or AI) start contributing to omo-switch.
+This guide helps new developers (human or AI) start contributing to lazyomo.
 
 ## Prerequisites
 
@@ -15,14 +15,14 @@ This guide helps new developers (human or AI) start contributing to omo-switch.
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/itokun99/omo-switch.git
-cd omo-switch
+git clone https://github.com/itokun99/lazyomo.git
+cd lazyomo
 ```
 
 ### 2. Build
 
 ```bash
-go build -o omo-switch ./cmd/omo-switch
+go build -o lazyomo ./cmd/lazyomo
 ```
 
 ### 3. Run Tests
@@ -34,29 +34,24 @@ go test ./...
 ### 4. Run Application
 
 ```bash
-# TUI mode (default)
-./omo-switch
+# TUI editor (default, edits ~/.omo/omo.jsonc)
+./lazyomo
 
-# CLI mode
-./omo-switch --list
-./omo-switch --current
-./omo-switch show claude
-./omo-switch claude
+# Help
+./lazyomo --help
 ```
 
 ## Project Structure
 
 ```
-omo-switch/
-├── cmd/omo-switch/          # Entry point
+lazyomo/
+├── cmd/lazyomo/          # Entry point (open editor or --help)
 │   └── main.go
 ├── internal/
-│   ├── domain/              # Business logic (no I/O)
-│   ├── application/         # Service orchestration
-│   ├── infrastructure/      # I/O implementations
-│   ├── cli/                 # CLI handler
-│   └── tui/                 # TUI interface
-│       └── components/      # UI components
+│   ├── omodit/              # JSONC engine (Load, Get, Set, Add, Remove, Save)
+│   ├── editor/              # Editable surface, validation, dirty set
+│   └── tui/                 # Bubble Tea editor UI (model, update, view, styles)
+├── docs/                    # spec-tui-v1.md (UI), spec-editor-v1.md (scope)
 ├── .agents/rules/           # AI agent documentation
 └── AGENTS.md                # Master AI rules
 ```
@@ -91,7 +86,7 @@ Follow the patterns:
 go test ./...
 
 # Run specific package tests
-go test ./internal/domain/...
+go test ./internal/editor/... ./internal/omodit/...
 
 # Run with coverage
 go test -cover ./...
@@ -107,10 +102,11 @@ go test -race ./...
 go vet ./...
 
 # Build
-go build -o omo-switch ./cmd/omo-switch
+go build -o lazyomo ./cmd/lazyomo
 
 # Manual test
-./omo-switch --list
+./lazyomo --help
+./lazyomo   # needs ~/.omo/omo.jsonc present
 ```
 
 ### 6. Commit
@@ -183,26 +179,24 @@ func TestFoo(t *testing.T) {
 
 ## Adding Features
 
-### New CLI Command
+### Launcher Verb
 
-1. Read command-guidelines.md
-2. Add case in handler.go
-3. Create cmdXxx() function
-4. Update help text
-5. Add tests
+1. Read command-guidelines.md (v1 ships no verbs besides --help)
+2. Keep manual dispatch in cmd/lazyomo, route through internal/editor
+3. Update usage text
+4. Add tests
 
-### New TUI Component
+### TUI Pane or Dialog
 
 1. Read cli-architecture.md (TUI section)
-2. Create component in components/
-3. Follow FooModel/FooStyles pattern
-4. Add to app.go
-5. Create tests
+2. Edit internal/tui/model.go, update.go, or view.go
+3. Keep the Editor interface accurate
+4. Create or update tests
 
-### New Config Group
+### Editable Field or Rule
 
-1. Edit domain/group.go
-2. Update KnownGroups map
+1. Read docs/spec-editor-v1.md plus provider-integration-guide.md
+2. Add the path rule in internal/editor/
 3. Update tests
 
 ## Common Issues
@@ -225,7 +219,7 @@ go test -race ./...
 ```bash
 # Clean and rebuild
 go clean
-go build ./cmd/omo-switch
+go build ./cmd/lazyomo
 ```
 
 ### Import Errors
@@ -239,18 +233,18 @@ go mod tidy
 
 ### DO
 
-- Follow clean architecture boundaries
-- Use interfaces for dependencies
-- Write table-driven tests
+- Follow the cmd/lazyomo -> tui -> editor -> omodit chain
+- Validate before mutating; keep writes inside editor Save
+- Write table-driven tests with stdlib testing
 - Handle errors with context
 - Use existing patterns
 
 ### DON'T
 
-- Add I/O to domain layer
-- Add business logic to infrastructure
+- Write files outside omodit Save
+- Let the TUI import omodit directly
+- Touch ~/.omo/agent/ credentials
 - Use external test frameworks
-- Share styles across TUI components
 - Create new packages without strong reason
 - Use Cobra or other CLI frameworks
 
@@ -267,7 +261,7 @@ Before submitting PR:
 
 - [ ] All tests pass (`go test ./...`)
 - [ ] No vet warnings (`go vet ./...`)
-- [ ] Build succeeds (`go build ./cmd/omo-switch`)
+- [ ] Build succeeds (`go build ./cmd/lazyomo`)
 - [ ] Package boundaries respected
 - [ ] Existing patterns followed
 - [ ] Tests added for new code
