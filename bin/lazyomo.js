@@ -18,7 +18,7 @@ const sibling = path.join(
 );
 
 function noBinary() {
-  console.error("lazyomo binary not found. Install with: npm i -g @indrawandev/lazyomo, or go install github.com/itokun99/lazyomo/cmd/lazyomo@latest");
+  console.error("lazyomo binary not found. Install with: npm i -g @itokun99/lazyomo, or go install github.com/itokun99/lazyomo/cmd/lazyomo@latest");
   process.exit(1);
 }
 

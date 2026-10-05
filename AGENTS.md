@@ -5,7 +5,7 @@
 **Branch:** main
 
 ## OVERVIEW
-lazyomo - CLI/TUI switcher for oh-my-openagent configs. Go 1.26.3 + Charm stack (Bubble Tea/Bubbles/Lipgloss), clean architecture (domain -> application -> infrastructure -> cli/tui), manual CLI dispatch. The npm package `@indrawandev/lazyomo` ships `bin/lazyomo.js`, a complete JS re-implementation of the same CLI.
+lazyomo - CLI/TUI switcher for oh-my-openagent configs. Go 1.26.3 + Charm stack (Bubble Tea/Bubbles/Lipgloss), clean architecture (domain -> application -> infrastructure -> cli/tui), manual CLI dispatch. The npm package `@itokun99/lazyomo` ships `bin/lazyomo.js`, a complete JS re-implementation of the same CLI.
 
 ## STRUCTURE
 ```

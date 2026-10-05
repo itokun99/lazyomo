@@ -31,7 +31,7 @@ go build -o lazyomo ./cmd/lazyomo
 npm:
 
 ```bash
-npm install -g @indrawandev/lazyomo
+npm install -g @itokun99/lazyomo
 ```
 
 Requires Go 1.26.3 or later for source builds.
