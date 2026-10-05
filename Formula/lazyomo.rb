@@ -6,25 +6,21 @@ class Lazyomo < Formula
 
   on_macos do
     on_intel do
-      url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/lazyomo-darwin-amd64"
-      sha256 "2f2e0791027b50f264ef3ab4adf642391d7298e6a6468fbe43b18fcc884cc932"
+      url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/${1}ea3b563d6a9f634cbf91dc81f132cad4d5db929bb1eb5af2805f06652fb335d9"
     end
 
     on_arm do
-      url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/lazyomo-darwin-arm64"
-      sha256 "6768f1d2bc4b02906829803eb97ef4f8c0c727046ac8e1fbf128a1932226badc"
+      url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/${1}8dd92329a594539e93beb300e2646741d066ad7b4a39eeeb92c0a9a477fa9c2f"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/lazyomo-linux-amd64"
-      sha256 "00af6b24097998aa51ed902f0d7c0ca9ab0fced5e4d62204b5ca2600632d03f8"
+      url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/${1}1633fbdd97d7f12ac74f88b0731e2d7e31dec96b43f49f4b9857c917d0c58f3a"
     end
 
     on_arm do
-      url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/lazyomo-linux-arm64"
-      sha256 "8159bfa1e005e5ea40e07e651695147caf82d450403faf6ff1c33ad9c8efe620"
+      url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/${1}f9a7a60afe73b84267cc3b33cc1d2d25baf1fb7fd98a79e1e217cf074c59fd85"
     end
   end
 
