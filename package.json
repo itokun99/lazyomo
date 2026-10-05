@@ -6,13 +6,20 @@
   "license": "MIT",
   "private": false,
   "bin": {
-    "lazyomo": "./bin/lazyomo.js"
+    "lazyomo": "bin/lazyomo.js"
   },
   "scripts": {
     "postinstall": "node scripts/install.js"
   },
-  "os": ["darwin", "linux", "win32"],
-  "cpu": ["x64", "arm64"],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
   "keywords": [
     "opencode",
     "oh-my-openagent",
