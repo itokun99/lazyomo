@@ -27,4 +27,14 @@ class Lazyomo < Formula
       sha256 "f9a7a60afe73b84267cc3b33cc1d2d25baf1fb7fd98a79e1e217cf074c59fd85"
     end
   end
+
+  def install
+    binary = Dir["lazyomo-*"].first
+    raise "lazyomo binary not found in download" if binary.nil?
+    bin.install binary => "lazyomo"
+  end
+
+  test do
+    assert_match "lazyomo", shell_output("#{bin}/lazyomo --help")
+  end
 end
