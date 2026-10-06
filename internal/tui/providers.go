@@ -34,13 +34,14 @@ type catalogDetailLine struct {
 	Value string
 }
 
-func (m *Model) setDerivedPaths(modelsPath, storePath string) {
+func (m *Model) setDerivedPaths(modelsPath, storePath, toolsPath string) {
 	m.modelsPath = modelsPath
 	m.storePath = storePath
+	m.toolsPath = toolsPath
 }
 
 func (m *Model) bindDerived() {
-	if m.modelsPath != "" && m.storePath != "" {
+	if m.modelsPath != "" && m.storePath != "" && m.toolsPath != "" {
 		return
 	}
 	agentDir, err := mcpfile.ResolveAgentDir()
@@ -53,6 +54,9 @@ func (m *Model) bindDerived() {
 	}
 	if m.storePath == "" {
 		m.storePath = storePath
+	}
+	if m.toolsPath == "" {
+		m.toolsPath = derived.CachePath(agentDir)
 	}
 }
 
@@ -67,7 +71,7 @@ func (m *Model) sideCatalog() bool {
 }
 
 func (m *Model) sideDerived() bool {
-	return m.sideProviders() || m.sideCatalog()
+	return m.sideProviders() || m.sideCatalog() || m.sideTools()
 }
 
 func (m *Model) refreshProviders() {

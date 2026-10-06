@@ -97,6 +97,9 @@ func (m *Model) listLen() int {
 	if m.sideCatalog() {
 		return len(m.catalogRows)
 	}
+	if m.sideTools() {
+		return len(m.toolsRows)
+	}
 	return len(m.entries)
 }
 
@@ -110,6 +113,9 @@ func (m *Model) detailListLen() int {
 	}
 	if m.sideCatalog() {
 		return len(m.catalogDetail)
+	}
+	if m.sideTools() {
+		return len(m.toolsDetail)
 	}
 	return len(m.detail.Lines)
 }

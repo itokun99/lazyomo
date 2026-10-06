@@ -66,7 +66,7 @@ func providersFixture(t *testing.T) (modelsPath, storePath string) {
 func newProvidersModel(t *testing.T, modelsPath, storePath string) *Model {
 	t.Helper()
 	m := newTestModel(newFakeWorkspace(newFakeEditor()))
-	m.setDerivedPaths(modelsPath, storePath)
+	m.setDerivedPaths(modelsPath, storePath, "")
 	m.refresh()
 	return m
 }

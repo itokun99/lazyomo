@@ -4,10 +4,10 @@ import "github.com/itokun99/lazyomo/internal/editor"
 
 // Grouped side panel (wireframe A): CONFIG holds the editor's config
 // sections in contract order plus any extra present top-level keys as
-// read-only rows; the MCP Servers row is the live surface (todo 9); the
-// Tools and PROVIDERS rows are read-only placeholders a later wave wires.
-// Headers are display only; cursor, [/], and digit keys move over the flat
-// selectable rows.
+// read-only rows; the MCP Servers row is the live surface (todo 9) and the
+// Tools row the read-only mcp-cache view (todo 11); the PROVIDERS rows are
+// read-only derived views (todo 10). Headers are display only; cursor, [/],
+// and digit keys move over the flat selectable rows.
 
 // futureRow identifies a placeholder side row a later wave wires.
 type futureRow string

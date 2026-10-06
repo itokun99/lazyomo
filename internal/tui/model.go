@@ -126,11 +126,12 @@ type Model struct {
 	mcpAddStage   int
 	mcpAddTypeIdx int
 	mcpAddType    string
-	// Derived providers/catalog state: explicit file paths plus the last
-	// loaded snapshots. Panes re-read on open so a changed file reflects
-	// on the next refresh; nothing derived is ever written.
+	// Derived providers/catalog/tools state: explicit file paths plus the
+	// last loaded snapshots. Panes re-read on open so a changed file
+	// reflects on the next refresh; nothing derived is ever written.
 	modelsPath     string
 	storePath      string
+	toolsPath      string
 	providers      derived.ProvidersSnapshot
 	providersErr   string
 	providerRows   []providerRow
@@ -139,6 +140,10 @@ type Model struct {
 	catalogErr     string
 	catalogRows    []catalogRow
 	catalogDetail  []catalogDetailLine
+	tools          derived.ToolsSnapshot
+	toolsErr       string
+	toolsRows      []toolsRow
+	toolsDetail    []toolsDetailLine
 	editMCP        bool
 	editRename     bool
 	editServer     string
@@ -253,6 +258,9 @@ func (m *Model) activePath() string {
 	if m.sideCatalog() && m.storePath != "" {
 		return m.storePath
 	}
+	if m.sideTools() && m.toolsPath != "" {
+		return m.toolsPath
+	}
 	if m.configPath == "" {
 		return "(no file)"
 	}
@@ -280,6 +288,10 @@ func (m *Model) refresh() {
 	}
 	if m.sideCatalog() {
 		m.refreshCatalog()
+		return
+	}
+	if m.sideTools() {
+		m.refreshTools()
 		return
 	}
 	sec := m.curSection()

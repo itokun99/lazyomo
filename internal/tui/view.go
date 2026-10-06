@@ -81,6 +81,9 @@ func (m *Model) entriesTitle() string {
 		if m.sideCatalog() {
 			return "Catalog · derived"
 		}
+		if m.sideTools() {
+			return "Tools · derived"
+		}
 		if row.hasFuture {
 			return row.label
 		}
@@ -191,6 +194,9 @@ func (m *Model) entryLines(inner int) []string {
 	if m.sideCatalog() {
 		return m.catalogEntryLines(inner)
 	}
+	if m.sideTools() {
+		return m.toolsEntryLines(inner)
+	}
 	focused := m.focus == PaneEntries
 	if len(m.entries) == 0 {
 		return []string{m.styles.Help.Render(padRight("  (no entries)", inner))}
@@ -234,6 +240,9 @@ func (m *Model) detailLines(inner int) []string {
 	}
 	if m.sideCatalog() {
 		return m.catalogDetailLines(inner)
+	}
+	if m.sideTools() {
+		return m.toolsDetailLines(inner)
 	}
 	focused := m.focus == PaneDetail
 	if len(m.detail.Lines) == 0 {

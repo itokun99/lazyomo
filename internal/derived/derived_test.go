@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/itokun99/lazyomo/internal/derived"
 )
@@ -174,6 +175,9 @@ func TestDerivedMissingEmptyState(t *testing.T) {
 	if _, err := derived.LoadCatalog(filepath.Join(dir, "no-store.json")); err == nil {
 		t.Error("LoadCatalog(missing) = nil, want an error")
 	}
+	if _, err := derived.LoadTools(filepath.Join(dir, "no-cache.json")); err == nil {
+		t.Error("LoadTools(missing) = nil, want an error")
+	}
 }
 
 func TestDerivedMalformedNoCrash(t *testing.T) {
@@ -185,6 +189,10 @@ func TestDerivedMalformedNoCrash(t *testing.T) {
 	badCatalog := writeDerivedFile(t, dir, "models-store.json", `{"acme": {"models": `)
 	if _, err := derived.LoadCatalog(badCatalog); err == nil {
 		t.Error("LoadCatalog(malformed) = nil, want an error")
+	}
+	badTools := writeDerivedFile(t, dir, "mcp-cache.json", `{"servers": {"acme": {"tools": `)
+	if _, err := derived.LoadTools(badTools); err == nil {
+		t.Error("LoadTools(malformed) = nil, want an error")
 	}
 }
 
@@ -351,6 +359,224 @@ func TestLoadProvidersMalformedFieldSurvives(t *testing.T) {
 	}
 }
 
+const (
+	toolsFixture = `{
+  "servers": {
+    "acme": {
+      "configHash": "hash-acme",
+      "fetchedAt": 1789027833963,
+      "tools": [
+        {"name": "create-issue", "description": "Create an issue", "inputSchema": {"type": "object"}},
+        {"name": "list-issues", "description": "List issues"}
+      ]
+    },
+    "beta": {
+      "configHash": "hash-beta",
+      "fetchedAt": 1789027900000,
+      "tools": [
+        {"name": "search", "description": "Search documents"}
+      ]
+    }
+  }
+}`
+
+	toolsZeroFixture = `{
+  "servers": {
+    "empty": {
+      "configHash": "hash-empty",
+      "fetchedAt": 1789027833963,
+      "tools": []
+    }
+  }
+}`
+
+	toolsJunkFixture = `{
+  "servers": {
+    "acme": {
+      "configHash": "hash-acme",
+      "fetchedAt": 1789027833963,
+      "tools": [
+        {"name": "real", "description": "kept"},
+        "junk-string",
+        42,
+        {"description": "no name"},
+        {"name": "also-real"}
+      ]
+    }
+  }
+}`
+
+	toolsStringTimeFixture = `{
+  "servers": {
+    "acme": {
+      "configHash": "hash-acme",
+      "fetchedAt": "2026-10-06T00:00:00Z",
+      "tools": []
+    }
+  }
+}`
+)
+
+func TestLoadToolsCounts(t *testing.T) {
+	dir := t.TempDir()
+	path := writeDerivedFile(t, dir, "mcp-cache.json", toolsFixture)
+
+	snap, err := derived.LoadTools(path)
+	if err != nil {
+		t.Fatalf("LoadTools() error = %v", err)
+	}
+	if len(snap.Servers) != 2 {
+		t.Fatalf("servers = %d, want 2", len(snap.Servers))
+	}
+	if snap.TotalTools != 3 {
+		t.Fatalf("TotalTools = %d, want 3", snap.TotalTools)
+	}
+	acme := snap.Servers[0]
+	if acme.Name != "acme" {
+		t.Fatalf("first server = %q, want acme (sorted)", acme.Name)
+	}
+	if acme.ToolCount != 2 {
+		t.Errorf("acme ToolCount = %d, want 2", acme.ToolCount)
+	}
+	if acme.FetchedAt != "1789027833963" {
+		t.Errorf("acme FetchedAt = %q, want the epoch number literally", acme.FetchedAt)
+	}
+	if len(acme.Tools) != 2 {
+		t.Fatalf("acme tools = %d, want 2", len(acme.Tools))
+	}
+	if acme.Tools[0].Name != "create-issue" || acme.Tools[0].Description != "Create an issue" {
+		t.Errorf("acme tool 0 = %+v", acme.Tools[0])
+	}
+	if acme.Tools[1].Name != "list-issues" || acme.Tools[1].Description != "List issues" {
+		t.Errorf("acme tool 1 = %+v", acme.Tools[1])
+	}
+	beta := snap.Servers[1]
+	if beta.Name != "beta" || beta.ToolCount != 1 {
+		t.Fatalf("beta = %+v, want 1 tool", beta)
+	}
+	if beta.Tools[0].Name != "search" || beta.Tools[0].Description != "Search documents" {
+		t.Errorf("beta tool 0 = %+v", beta.Tools[0])
+	}
+	if snap.Path != path {
+		t.Errorf("Path = %q, want %q", snap.Path, path)
+	}
+	if snap.RefreshedAt.IsZero() {
+		t.Error("RefreshedAt is zero, want file mtime")
+	}
+	t.Logf("tools: servers=2 total=3 acmeFetchedAt=%q", acme.FetchedAt)
+}
+
+func TestLoadToolsZeroToolsServer(t *testing.T) {
+	dir := t.TempDir()
+	path := writeDerivedFile(t, dir, "mcp-cache.json", toolsZeroFixture)
+
+	snap, err := derived.LoadTools(path)
+	if err != nil {
+		t.Fatalf("LoadTools() error = %v", err)
+	}
+	if len(snap.Servers) != 1 {
+		t.Fatalf("servers = %d, want 1 (zero-tool server must be kept)", len(snap.Servers))
+	}
+	if snap.Servers[0].ToolCount != 0 {
+		t.Errorf("ToolCount = %d, want 0", snap.Servers[0].ToolCount)
+	}
+	if len(snap.Servers[0].Tools) != 0 {
+		t.Errorf("Tools = %d entries, want 0", len(snap.Servers[0].Tools))
+	}
+	if snap.TotalTools != 0 {
+		t.Errorf("TotalTools = %d, want 0", snap.TotalTools)
+	}
+}
+
+func TestLoadToolsJunkEntriesSkipped(t *testing.T) {
+	dir := t.TempDir()
+	path := writeDerivedFile(t, dir, "mcp-cache.json", toolsJunkFixture)
+
+	snap, err := derived.LoadTools(path)
+	if err != nil {
+		t.Fatalf("LoadTools() error = %v", err)
+	}
+	if len(snap.Servers) != 1 {
+		t.Fatalf("servers = %d, want 1 (junk tools must not drop the server)", len(snap.Servers))
+	}
+	acme := snap.Servers[0]
+	if acme.ToolCount != 2 {
+		t.Fatalf("ToolCount = %d, want 2 (junk entries skipped)", acme.ToolCount)
+	}
+	if acme.Tools[0].Name != "real" || acme.Tools[1].Name != "also-real" {
+		t.Errorf("tools = %+v, want real then also-real", acme.Tools)
+	}
+	if snap.TotalTools != 2 {
+		t.Errorf("TotalTools = %d, want 2", snap.TotalTools)
+	}
+}
+
+func TestLoadToolsStringFetchedAt(t *testing.T) {
+	dir := t.TempDir()
+	path := writeDerivedFile(t, dir, "mcp-cache.json", toolsStringTimeFixture)
+
+	snap, err := derived.LoadTools(path)
+	if err != nil {
+		t.Fatalf("LoadTools() error = %v", err)
+	}
+	if snap.Servers[0].FetchedAt != "2026-10-06T00:00:00Z" {
+		t.Errorf("FetchedAt = %q, want the ISO string", snap.Servers[0].FetchedAt)
+	}
+}
+
+func TestLoadToolsRebuildReflectsChange(t *testing.T) {
+	dir := t.TempDir()
+	path := writeDerivedFile(t, dir, "mcp-cache.json", toolsFixture)
+	first, err := derived.LoadTools(path)
+	if err != nil {
+		t.Fatalf("first LoadTools() error = %v", err)
+	}
+	if first.TotalTools != 3 {
+		t.Fatalf("first TotalTools = %d, want 3", first.TotalTools)
+	}
+	changed := `{"servers": {"solo": {"fetchedAt": 1789027833963, "tools": [{"name": "only", "description": "Only tool"}]}}}`
+	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
+		t.Fatalf("rewrite mcp-cache.json: %v", err)
+	}
+	second, err := derived.LoadTools(path)
+	if err != nil {
+		t.Fatalf("second LoadTools() error = %v", err)
+	}
+	if len(second.Servers) != 1 || second.Servers[0].Name != "solo" {
+		t.Fatalf("rebuilt servers = %+v, want single solo", second.Servers)
+	}
+	if second.TotalTools != 1 {
+		t.Fatalf("rebuilt TotalTools = %d, want 1", second.TotalTools)
+	}
+}
+
+func TestLoadToolsPerfGuard(t *testing.T) {
+	path := filepath.Join("testdata", "mcp-cache-large.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat fixture: %v", err)
+	}
+	if info.Size() < 1_000_000 {
+		t.Fatalf("fixture size = %d, want ~1.1 MB", info.Size())
+	}
+	start := time.Now()
+	snap, err := derived.LoadTools(path)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("LoadTools() error = %v", err)
+	}
+	if len(snap.Servers) != 16 {
+		t.Fatalf("servers = %d, want 16", len(snap.Servers))
+	}
+	if snap.TotalTools != 463 {
+		t.Fatalf("TotalTools = %d, want 463", snap.TotalTools)
+	}
+	if elapsed > 150*time.Millisecond {
+		t.Fatalf("LoadTools took %v, want < 150 ms", elapsed)
+	}
+	t.Logf("perf: %d servers / %d tools from %d bytes in %v", len(snap.Servers), snap.TotalTools, info.Size(), elapsed)
+}
+
 func TestDerivedLoadIsReadOnly(t *testing.T) {
 	dir := t.TempDir()
 	providersPath := writeDerivedFile(t, dir, "models.json", providersFixture)
@@ -369,13 +595,25 @@ func TestDerivedLoadIsReadOnly(t *testing.T) {
 	if _, err := derived.LoadCatalog(catalogPath); err != nil {
 		t.Fatalf("LoadCatalog() error = %v", err)
 	}
+	toolsPath := writeDerivedFile(t, dir, "mcp-cache.json", toolsFixture)
+	beforeTools, err := os.ReadFile(toolsPath)
+	if err != nil {
+		t.Fatalf("reading tools fixture: %v", err)
+	}
+	if _, err := derived.LoadTools(toolsPath); err != nil {
+		t.Fatalf("LoadTools() error = %v", err)
+	}
 	afterProviders, _ := os.ReadFile(providersPath)
 	afterCatalog, _ := os.ReadFile(catalogPath)
+	afterTools, _ := os.ReadFile(toolsPath)
 	if string(beforeProviders) != string(afterProviders) {
 		t.Error("LoadProviders modified models.json")
 	}
 	if string(beforeCatalog) != string(afterCatalog) {
 		t.Error("LoadCatalog modified models-store.json")
+	}
+	if string(beforeTools) != string(afterTools) {
+		t.Error("LoadTools modified mcp-cache.json")
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

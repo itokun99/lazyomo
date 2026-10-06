@@ -67,6 +67,37 @@ func Paths(agentDir string) (modelsPath, storePath string) {
 	return filepath.Join(agentDir, "models.json"), filepath.Join(agentDir, "models-store.json")
 }
 
+// CachePath resolves the MCP tools cache under an agent directory. Unlike
+// models.json it lives in the cache subdirectory.
+func CachePath(agentDir string) string {
+	return filepath.Join(agentDir, "cache", "mcp-cache.json")
+}
+
+// Tool is one MCP tool entry from the cache: the display name and the
+// description the pane lists. inputSchema and annotations are carried by
+// the cache but not rendered, so they are not decoded here.
+type Tool struct {
+	Name        string
+	Description string
+}
+
+// ToolsServer groups one server's cached tools with its freshness marker.
+type ToolsServer struct {
+	Name      string
+	ToolCount int
+	Tools     []Tool
+	FetchedAt string
+}
+
+// ToolsSnapshot is the loaded mcp-cache.json view: servers sorted by name,
+// the total tool count, and the source path plus file mtime.
+type ToolsSnapshot struct {
+	Servers     []ToolsServer
+	Path        string
+	RefreshedAt time.Time
+	TotalTools  int
+}
+
 // LoadProviders reads the providers file at path. A missing, unreadable, or
 // malformed file returns an error and no snapshot; callers render the
 // empty state.
@@ -220,6 +251,81 @@ func parseCatalog(data []byte) ([]CatalogProvider, error) {
 		})
 	}
 	return providers, nil
+}
+
+// LoadTools reads the MCP tools cache at path with the same empty-state
+// contract as LoadProviders.
+func LoadTools(path string) (ToolsSnapshot, error) {
+	if strings.TrimSpace(path) == "" {
+		return ToolsSnapshot{}, fmt.Errorf("loading mcp-cache.json: path is empty")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ToolsSnapshot{}, fmt.Errorf("loading mcp-cache.json: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ToolsSnapshot{}, fmt.Errorf("loading mcp-cache.json: %w", err)
+	}
+	servers, err := parseTools(raw)
+	if err != nil {
+		return ToolsSnapshot{}, err
+	}
+	total := 0
+	for _, s := range servers {
+		total += s.ToolCount
+	}
+	return ToolsSnapshot{Servers: servers, Path: path, RefreshedAt: info.ModTime(), TotalTools: total}, nil
+}
+
+func parseTools(data []byte) ([]ToolsServer, error) {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, fmt.Errorf("parsing mcp-cache.json: empty document")
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, fmt.Errorf("parsing mcp-cache.json: %w", err)
+	}
+	entries := top
+	if raw, ok := top["servers"]; ok {
+		var wrapped map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &wrapped); err != nil {
+			return nil, fmt.Errorf("parsing mcp-cache.json: %w", err)
+		}
+		entries = wrapped
+	}
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
+		if k == "servers" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	servers := make([]ToolsServer, 0, len(keys))
+	for _, key := range keys {
+		// Defensive per-entry decode, same contract as the catalog: the live
+		// cache stores epoch numbers for fetchedAt and arbitrary tool
+		// shapes, so every field renders best-effort, junk tool entries are
+		// skipped, and no single entry drops the server.
+		entry := map[string]any{}
+		_ = json.Unmarshal(entries[key], &entry)
+		tools := make([]Tool, 0)
+		for _, item := range modelItems(entry["tools"]) {
+			name := stringField(item, "name")
+			if name == "" {
+				continue
+			}
+			tools = append(tools, Tool{Name: name, Description: stringField(item, "description")})
+		}
+		servers = append(servers, ToolsServer{
+			Name:      key,
+			ToolCount: len(tools),
+			Tools:     tools,
+			FetchedAt: timestampField(entry, "fetchedAt"),
+		})
+	}
+	return servers, nil
 }
 
 // modelItems returns the object entries of a models list, skipping anything
