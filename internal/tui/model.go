@@ -57,6 +57,7 @@ const (
 	OverlayError
 	OverlayMCPAdd
 	OverlayMCPReveal
+	OverlayPicker
 )
 
 // confirmKind selects the pending confirmed action.
@@ -154,6 +155,8 @@ type Model struct {
 	renameFrom     string
 	renameTo       string
 	helpScroll     int
+	picker         *pickerState
+	pickerBuild    func(targetPath string) []workspace.Candidate
 
 	filter     string
 	filterMode bool

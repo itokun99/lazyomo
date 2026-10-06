@@ -1,34 +1,46 @@
 # internal/tui
 
-Score 12/17 -> created: distinct domain; highest source-LOC package; `app.go` (653 lines) is the repo's largest source file.
+Bubble Tea app shell for the lazygit-style editor. Contract: [docs/spec-tui-v2.md](../../docs/spec-tui-v2.md).
 
 ## OVERVIEW
-Bubble Tea app shell (`App`) that renders the interactive TUI: view modes, key dispatch, async `tea.Cmd` helpers. Renders the 9 leaf components in `components/` - contract in `components/AGENTS.md`.
+Renders the grouped side panel, the entries pane, the detail pane, the keybar, and the single status line, plus the overlays (edit, add, confirm, help, error, MCP add, secret reveal, model picker). One binding table drives dispatch, the keybar, and the help overlay. The data layer is consumed through consumer-side interfaces declared here; the real `*workspace.Registry`, `*editor.Editor`, and `*mcpfile.Session` are wired in `cmd/lazyomo/main.go`.
 
 ## STRUCTURE
-- `app.go` (653) - `App` model, `Update`/`View`, Msg types, `tea.Cmd` helpers, per-mode key handlers
-- `keys.go` (86) - `KeyMap` / `DefaultKeyMap`
-- `styles.go` (65) - app-level `Styles` (components own theirs)
-- `components/` - 9 leaf renderers + tests (1555 LOC tests)
+- `model.go` - `Model` state, `New`, `Workspace`/`ConfigSurface`/`MCPSurface` interfaces, pane/overlay enums, dirty tracking, viewport math
+- `update.go` - `Update`, context resolution, dispatch through the binding table, overlay/filter/edit/add flows, save and reload confirms
+- `view.go` - `renderBase`, hand-painted bordered panes, keybar, status line, overlay boxes, help
+- `bindings.go` - the ONE binding table (`bindingTables`), `Action` enum, `keybarFor`, `lookupAction`
+- `side.go` - grouped side panel (CONFIG / MCP / PROVIDERS) and its flat cursor mapping
+- `mcp.go` - MCP servers surface: list rows, detail rows, add/remove/rename/toggle/reveal, masked secrets
+- `providers.go` - read-only Connections and Catalog panes
+- `tools.go` - read-only Tools pane
+- `picker.go` - `OverlayPicker` (fuzzy model picker): geometry, keys, preview, write-back
+- `styles.go` - lipgloss styles; `StylesWithRenderer` pins a color profile for Ascii goldens
+- `*_test.go` - unit and golden tests; `testdata/layout-80x24.golden` and `layout-120x40.golden` are the density goldens
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| Add a view mode | app.go:40-50 + `View()` app.go:204-302 | enum value + render branch; branch order sets IsActive() priority |
-| Add key handling | `handleKey` app.go:430-501; per-mode handlers app.go:502-653 | whichever component is active intercepts keys first |
-| Add an async service call | app.go:340-427 | `tea.Cmd` -> Msg pattern (e.g. `switchConfigCmd` / `switchCompleteMsg`) |
-| Transient status text | `status.SetMessage` + `clearMessageAfter` | 3s auto-clear via `errorClearDuration` (app.go:37) |
-| Terminal size gate | app.go:204-210 | below 80x24 (`MinWidth`/`MinHeight`) shows resize prompt |
-| Key bindings | keys.go:7-27 | arrows + vim bindings (README key table) |
+| Add or change a key | `bindings.go` | one row in the right `ContextTable`; dispatch, keybar, and help all follow |
+| Add a pane or overlay | `view.go` (`renderBase`, `renderOverlayBox`) + `update.go` (`contextName`, `handleOverlayKey`) | a new context needs a table and a render branch |
+| Side panel groups/rows | `side.go` | `configSideOrder`, `buildSideGroups`; read-only rows carry `(ro)` |
+| MCP servers surface | `mcp.go` | list/detail build, `e`/`a`/`d`/`space`/`x` flows, masking |
+| Read-only derived panes | `providers.go`, `tools.go` | re-read on open, never write |
+| Model picker | `picker.go` | `isPickerPath`, `pickerBox`, `pickerResultRows`, write-back |
+| Data-layer interface | `model.go` | `Workspace`, `ConfigSurface`, `MCPSurface` |
+| Density / goldens | `view.go`, `layout_test.go` | refresh with `UPDATE_GOLDEN=1 go test ./internal/tui -run TestGoldens` |
 
 ## CONVENTIONS
-- Depends on the consumer-side `configService` interface (app.go:16-28): never import `internal/application`; tests mock the interface (app_test.go:58-61).
-- Every service call is async: return a `tea.Cmd`, mutate state in `Update` when the Msg arrives.
-- Errors become status-bar text ("Error: ..."), auto-cleared after 3s - never panic, never propagate out of the TUI.
-- `View()` renders exactly one of backup/diff/validate/detail/info/search/list (first matching `IsActive()` wins); help overlays on top.
-- App-level styles live in styles.go; each component receives its own `XxxStyles` value in `Render`.
+- Consumer-side interfaces only (`Workspace`, `ConfigSurface`, `MCPSurface` in `model.go`); the real registry, editor, and mcpfile session are wired in `cmd/lazyomo/main.go`. Tests use the `fakeWorkspace` harness.
+- One binding table per context. Dispatch (`handleNormalKey`), the keybar (`keybarFor`), and help (`helpLines`) all read `bindingTables`; `TestBindingTableConsistency` pins that they agree.
+- Every pane is hand-painted to an exact width and height so the density contract holds: exactly `height` lines, each at most `width` columns, at 80x24 and 120x40. `fitWidth`, `padRight`, and `windowOf` do the width math.
+- Focus is shown by the green frame plus a `●` title marker; selection by `❯`. Color is never the sole cue.
+- Secrets (`env`/`headers` values) stay masked in every settled state; raw values appear only inside the reveal overlay and an explicitly entered edit overlay.
+- Nothing derived is ever written; the derived panes read explicit paths and render an empty state on a missing or malformed file.
+- Styles come from `Styles`; tests that need deterministic output pin the Ascii profile via `StylesWithRenderer`.
 
 ## ANTI-PATTERNS
-- Do NOT let components import `tui.App` - they are leaf nodes (see components/AGENTS.md).
-- Do NOT add a screen without both a `View()` branch and a key-handler branch - a missing branch silently no-ops.
-- Do NOT put file/config logic here - it belongs in ConfigService.
+- Do NOT handle a key outside the binding table. Only printable runes (filter/edit/add/picker buffers) and the global `ctrl+c` quit bypass it.
+- Do NOT let a pane paint more than its width or drop the 2-row scroll margin; the goldens and `TestDensity80x24`/`TestDensity120x40` guard it.
+- Do NOT write from a read-only or derived pane, and do NOT read or write credential files (`auth.json`, `mcp-auth/`).
+- Do NOT import `internal/tui` from lower packages; the TUI depends on them, never the reverse.

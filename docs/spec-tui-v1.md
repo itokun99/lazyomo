@@ -3,6 +3,8 @@
 Target: a lazygit-style editor for `~/.omo/omo.jsonc`.
 Audience: implementers of the Bubble Tea TUI. This spec is decision-complete for v1.
 
+> Superseded by [docs/spec-tui-v2.md](spec-tui-v2.md). v2 replaces the three-zone layout with the grouped side panel, adds the single binding table, the MCP servers surface, the read-only derived panes, and the fuzzy model picker. This file is kept for history.
+
 ## 1. Pane Model
 
 The screen has three zones plus overlays. It copies lazygit's side-plus-main layout.
@@ -70,7 +72,9 @@ Discard changes: press `r`. When clean, it reloads silently. When dirty, a popup
 
 Error and diagnostic display: validation errors appear inline in Detail plus a short note in status. Save or load failures open an error popup with `enter` to retry and `esc` to close. The last error stays in status until the next successful action.
 
-Read-only sections: Telemetry and any unknown top-level keys render read-only. Their Detail pane shows values with an `(read-only)` tag. `e`, `a`, `d`, and `space` there show `read-only section` in status instead of opening popups. Selection, filtering, and help still work.
+Read-only sections: any top-level key outside the editable set renders read-only. Their Detail pane shows values with an `(read-only)` tag. `e`, `a`, `d`, and `space` there show `read-only section` in status instead of opening popups. Selection, filtering, and help still work.
+
+Reconciliation (v2): v1 grouped `Telemetry` with the read-only keys, but `telemetry.enabled` is an editable bool toggle. v2 moves it into the editable set and renders every other present top-level key (`$schema`, `model_profile`, `_migrations` in the live file) as its own read-only section. See [docs/spec-tui-v2.md](spec-tui-v2.md) and [docs/spec-editor-v2.md](spec-editor-v2.md).
 
 ## 4. Non-Goals v1
 
