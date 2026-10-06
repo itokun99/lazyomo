@@ -501,11 +501,11 @@ func (e *Editor) readOnlyDetail(topKey, key string) (Detail, error) {
 	return Detail{
 		Title: key,
 		Lines: []DetailLine{{
-				Label: key,
-				Path:  path,
-				Value: displayValue(raw),
-				Bool:  isBool(raw),
-			}},
+			Label: key,
+			Path:  path,
+			Value: displayValue(raw),
+			Bool:  isBool(raw),
+		}},
 	}, nil
 }
 

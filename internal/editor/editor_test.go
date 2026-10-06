@@ -279,7 +279,7 @@ func TestLoad_MissingBlocks(t *testing.T) {
 			sections := ed.Sections()
 			if len(sections) != 6 {
 				t.Fatalf("Sections() returned %d sections, want 6", len(sections))
-		}
+			}
 			for _, id := range tt.wantEmpty {
 				section := mustSection(t, sections, id)
 				if len(section.Entries) != 0 {
