@@ -4,6 +4,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/itokun99/lazyomo/internal/editor"
+	"github.com/itokun99/lazyomo/internal/mcpfile"
 	"github.com/itokun99/lazyomo/internal/workspace"
 )
 
@@ -53,6 +54,8 @@ const (
 	OverlayEdit
 	OverlayAdd
 	OverlayError
+	OverlayMCPAdd
+	OverlayMCPReveal
 )
 
 // confirmKind selects the pending confirmed action.
@@ -64,6 +67,8 @@ const (
 	confirmReload
 	confirmQuit
 	confirmDelete
+	confirmMCPRemove
+	confirmRename
 )
 
 // scrollMargin keeps the cursor away from list edges.
@@ -110,7 +115,26 @@ type Model struct {
 	addBuf      string
 	addErr      string
 	errorText   string
-	helpScroll  int
+
+	// MCP servers surface state: the bound session, its rendered list and
+	// detail, and the overlay targets for the add/rename/reveal flows.
+	mcp           MCPSurface
+	mcpPath       string
+	mcpRows       []mcpRow
+	mcpDetail     []mcpDetailLine
+	mcpAddStage   int
+	mcpAddTypeIdx int
+	mcpAddType    string
+	editMCP       bool
+	editRename    bool
+	editServer    string
+	editField     string
+	editKind      mcpfile.FieldKind
+	revealText    string
+	pendingMCP    string
+	renameFrom    string
+	renameTo      string
+	helpScroll    int
 
 	filter     string
 	filterMode bool
@@ -128,6 +152,7 @@ type Model struct {
 func New(ws Workspace) *Model {
 	m := &Model{ws: ws, styles: DefaultStyles(), focus: PaneSections}
 	m.bindConfig()
+	m.bindMCP()
 	m.refresh()
 	return m
 }
@@ -204,6 +229,9 @@ func (m *Model) dirtyCount() int {
 
 // activePath names the document the sections pane edits.
 func (m *Model) activePath() string {
+	if m.sideMCP() && m.mcpPath != "" {
+		return m.mcpPath
+	}
 	if m.configPath == "" {
 		return "(no file)"
 	}
@@ -221,6 +249,10 @@ func (m *Model) refresh() {
 	m.flat = flattenSide(m.groups)
 	m.secIdx = clamp(m.secIdx, len(m.flat))
 	m.secOffset = clampWindow(m.secOffset, sideCursorLine(m.groups, m.secIdx), m.secViewport(), sideTotalLines(m.groups))
+	if m.sideMCP() {
+		m.refreshMCP()
+		return
+	}
 	sec := m.curSection()
 	m.entries = nil
 	if sec != nil {

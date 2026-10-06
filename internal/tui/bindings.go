@@ -31,6 +31,7 @@ const (
 	actOpenAdd
 	actOpenDelete
 	actToggle
+	actReveal
 	actSave
 	actReload
 	actHelp
@@ -77,16 +78,20 @@ type ContextTable struct {
 
 // Context names, shared by dispatch, keybar, and help.
 const (
-	ctxSections = "sections"
-	ctxEntries  = "entries"
-	ctxDetail   = "detail"
-	ctxFilter   = "filter"
-	ctxConfirm  = "confirm"
-	ctxEdit     = "edit"
-	ctxAdd      = "add"
-	ctxError    = "error"
-	ctxHelp     = "help"
-	ctxPicker   = "picker"
+	ctxSections  = "sections"
+	ctxEntries   = "entries"
+	ctxDetail    = "detail"
+	ctxFilter    = "filter"
+	ctxConfirm   = "confirm"
+	ctxEdit      = "edit"
+	ctxAdd       = "add"
+	ctxError     = "error"
+	ctxHelp      = "help"
+	ctxPicker    = "picker"
+	ctxMCPList   = "mcp-servers"
+	ctxMCPDetail = "mcp-detail"
+	ctxMCPAdd    = "mcp-add"
+	ctxMCPReveal = "mcp-reveal"
 )
 
 // bindingTables is the single source of truth for keys.
@@ -250,6 +255,86 @@ var bindingTables = []ContextTable{
 			{Key: "end", Label: "home/end", Desc: "ends", Act: actPickerMove},
 			{Key: "backspace", Label: "bsp", Desc: "delete", Act: actBackspace},
 			{Key: "ctrl+u", Label: "C-u", Desc: "clear", Act: actPickerClear},
+		},
+	},
+	{
+		Name: ctxMCPList, Title: "MCP servers",
+		Keys: []Binding{
+			{Key: "j", Label: "j/k", Desc: "move", Act: actMoveDown, Bar: true},
+			{Key: "k", Label: "j/k", Desc: "move", Act: actMoveUp},
+			{Key: "down", Label: "j/k", Desc: "move", Act: actMoveDown},
+			{Key: "up", Label: "j/k", Desc: "move", Act: actMoveUp},
+			{Key: "enter", Label: "enter", Desc: "detail", Act: actDrillDown, Bar: true},
+			{Key: "esc", Label: "esc", Desc: "back", Act: actClimbUp},
+			{Key: "e", Label: "e", Desc: "edit", Act: actOpenEdit, Bar: true},
+			{Key: "a", Label: "a", Desc: "add", Act: actOpenAdd, Bar: true},
+			{Key: "d", Label: "d", Desc: "del", Act: actOpenDelete, Bar: true},
+			{Key: " ", Label: "space", Desc: "toggle", Act: actToggle, Bar: true},
+			{Key: "x", Label: "x", Desc: "reveal", Act: actReveal, Bar: true},
+			{Key: "/", Label: "/", Desc: "filter", Act: actFilter},
+			{Key: "h", Label: "h/l", Desc: "pane", Act: actFocusLeft},
+			{Key: "l", Label: "h/l", Desc: "pane", Act: actFocusRight},
+			{Key: "left", Label: "h/l", Desc: "pane", Act: actFocusLeft},
+			{Key: "right", Label: "h/l", Desc: "pane", Act: actFocusRight},
+			{Key: "tab", Label: "tab", Desc: "next pane", Act: actNextPane},
+			{Key: "shift+tab", Label: "S-tab", Desc: "prev pane", Act: actPrevPane},
+			{Key: "[", Label: "[ ]", Desc: "cycle", Act: actPrevSection, Bar: true},
+			{Key: "]", Label: "[ ]", Desc: "cycle", Act: actNextSection},
+			{Key: "1", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 0, Bar: true},
+			{Key: "2", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 1},
+			{Key: "3", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 2},
+			{Key: "4", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 3},
+			{Key: "5", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 4},
+			{Key: "6", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 5},
+			{Key: "7", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 6},
+			{Key: "8", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 7},
+			{Key: "9", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 8},
+			{Key: "0", Label: "1-9,0", Desc: "jump", Act: actJumpVisible, Arg: 9},
+			{Key: "s", Label: "s", Desc: "save", Act: actSave, Bar: true},
+			{Key: "r", Label: "r", Desc: "reload", Act: actReload, Bar: true},
+			{Key: "?", Label: "?", Desc: "help", Act: actHelp, Bar: true},
+			{Key: "q", Label: "q", Desc: "quit", Act: actQuit, Bar: true},
+		},
+	},
+	{
+		Name: ctxMCPDetail, Title: "MCP detail",
+		Keys: []Binding{
+			{Key: "j", Label: "j/k", Desc: "move", Act: actMoveDown, Bar: true},
+			{Key: "k", Label: "j/k", Desc: "move", Act: actMoveUp},
+			{Key: "down", Label: "j/k", Desc: "move", Act: actMoveDown},
+			{Key: "up", Label: "j/k", Desc: "move", Act: actMoveUp},
+			{Key: "e", Label: "e", Desc: "edit", Act: actOpenEdit, Bar: true},
+			{Key: " ", Label: "space", Desc: "toggle", Act: actToggle, Bar: true},
+			{Key: "x", Label: "x", Desc: "reveal", Act: actReveal, Bar: true},
+			{Key: "esc", Label: "esc", Desc: "back", Act: actClimbUp, Bar: true},
+			{Key: "h", Label: "h/l", Desc: "pane", Act: actFocusLeft},
+			{Key: "l", Label: "h/l", Desc: "pane", Act: actFocusRight},
+			{Key: "left", Label: "h/l", Desc: "pane", Act: actFocusLeft},
+			{Key: "right", Label: "h/l", Desc: "pane", Act: actFocusRight},
+			{Key: "tab", Label: "tab", Desc: "next pane", Act: actNextPane},
+			{Key: "shift+tab", Label: "S-tab", Desc: "prev pane", Act: actPrevPane},
+			{Key: "s", Label: "s", Desc: "save", Act: actSave, Bar: true},
+			{Key: "r", Label: "r", Desc: "reload", Act: actReload, Bar: true},
+			{Key: "?", Label: "?", Desc: "help", Act: actHelp, Bar: true},
+			{Key: "q", Label: "q", Desc: "quit", Act: actQuit, Bar: true},
+		},
+	},
+	{
+		Name: ctxMCPAdd, Title: "Add MCP server",
+		Keys: []Binding{
+			{Key: "enter", Label: "enter", Desc: "next", Act: actSubmit, Bar: true},
+			{Key: "esc", Label: "esc", Desc: "cancel", Act: actCancel, Bar: true},
+			{Key: "up", Label: "up/dn", Desc: "template", Act: actMoveUp},
+			{Key: "down", Label: "up/dn", Desc: "template", Act: actMoveDown},
+			{Key: "backspace", Label: "bsp", Desc: "delete", Act: actBackspace},
+		},
+	},
+	{
+		Name: ctxMCPReveal, Title: "Reveal secrets",
+		Keys: []Binding{
+			{Key: "esc", Label: "esc", Desc: "close", Act: actCancel, Bar: true},
+			{Key: "enter", Label: "enter", Desc: "close", Act: actCancel},
+			{Key: "x", Label: "x", Desc: "close", Act: actCancel},
 		},
 	},
 }
