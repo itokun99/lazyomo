@@ -36,6 +36,7 @@ type Session struct {
 	path     string
 	doc      *omodit.Document
 	skeleton string
+	dirty    map[string]struct{}
 }
 
 // ResolveAgentDir returns the agent directory holding mcp.json, preferring
@@ -213,24 +214,93 @@ func (s *Session) Settings() map[string]any {
 }
 
 // Save writes the document through omodit (atomic, with a timestamped
-// backup for an existing file). A session loaded from a missing file that
-// was never edited saves nothing; the first save after AddServer creates
-// the file without a backup.
-func (s *Session) Save() error {
+// backup for an existing file) and returns the path of the backup it
+// created, or "" when the file did not exist before. Dirty state is
+// cleared only on success. A session loaded from a missing file that was
+// never edited saves nothing; the first save after AddServer creates the
+// file without a backup.
+func (s *Session) Save() (string, error) {
 	if s.doc == nil {
-		return nil
+		return "", nil
 	}
 	if err := s.dropSkeleton(); err != nil {
-		return err
+		return "", err
 	}
 	data := s.doc.Bytes()
 	if !json.Valid(data) {
-		return fmt.Errorf("saving mcp.json: refusing to write non-strict JSON (comments or trailing commas present)")
+		return "", fmt.Errorf("saving mcp.json: refusing to write non-strict JSON (comments or trailing commas present)")
 	}
+	before := backupNames(s.path)
 	if err := s.doc.Save(); err != nil {
-		return fmt.Errorf("saving mcp.json: %w", err)
+		return "", fmt.Errorf("saving mcp.json: %w", err)
 	}
+	s.dirty = nil
+	return newBackupPath(before, backupNames(s.path)), nil
+}
+
+// Reload re-reads the file from disk, discarding unsaved edits. A file that
+// disappeared yields the same empty session as Load on a missing path; an
+// unreadable or invalid file leaves the current state untouched.
+func (s *Session) Reload() error {
+	fresh, err := Load(s.path)
+	if err != nil {
+		return err
+	}
+	s.doc = fresh.doc
+	s.skeleton = fresh.skeleton
+	s.dirty = nil
 	return nil
+}
+
+// DirtyPaths returns the deduplicated pointers changed since the last Save
+// or Reload, in sorted order.
+func (s *Session) DirtyPaths() []string {
+	paths := make([]string, 0, len(s.dirty))
+	for pointer := range s.dirty {
+		paths = append(paths, pointer)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// markDirty records one changed pointer.
+func (s *Session) markDirty(pointer string) {
+	if s.dirty == nil {
+		s.dirty = make(map[string]struct{})
+	}
+	s.dirty[pointer] = struct{}{}
+}
+
+// backupNames lists the timestamped backups omodit created so far for path.
+func backupNames(path string) map[string]struct{} {
+	dir := filepath.Dir(path)
+	prefix := filepath.Base(path) + ".bak."
+	names := make(map[string]struct{})
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return names
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			names[filepath.Join(dir, entry.Name())] = struct{}{}
+		}
+	}
+	return names
+}
+
+// newBackupPath returns the newest backup present after a save but not
+// before it, or "" when the save created none.
+func newBackupPath(before, after map[string]struct{}) string {
+	newest := ""
+	for name := range after {
+		if _, existed := before[name]; existed {
+			continue
+		}
+		if name > newest {
+			newest = name
+		}
+	}
+	return newest
 }
 
 // ensureDoc materializes the document for a session loaded from a missing

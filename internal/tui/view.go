@@ -165,7 +165,7 @@ func (m *Model) renderStatus() string {
 	if n > 0 {
 		state = fmt.Sprintf("%s dirty (%d)", m.styles.DirtyDot.Render("●"), n)
 	}
-	left := m.edPath() + "  " + state
+	left := m.activePath() + "  " + state
 	right := m.status
 	if right == "" {
 		right = "ready"
@@ -179,13 +179,6 @@ func (m *Model) renderStatus() string {
 	}
 	line := left + strings.Repeat(" ", gap) + right
 	return m.styles.Status.Width(m.width - 2).Render(truncatePlain(line, m.width-2))
-}
-
-func (m *Model) edPath() string {
-	if m.ed == nil {
-		return "(no file)"
-	}
-	return m.ed.Path()
 }
 
 func (m *Model) renderOverlay() string {

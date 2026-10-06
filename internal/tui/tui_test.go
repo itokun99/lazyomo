@@ -1,15 +1,29 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/itokun99/lazyomo/internal/editor"
+	"github.com/itokun99/lazyomo/internal/mcpfile"
+	"github.com/itokun99/lazyomo/internal/workspace"
 )
 
-var _ Editor = (*fakeEditor)(nil)
+var (
+	_ workspace.Session = (*fakeEditor)(nil)
+	_ ConfigSurface     = (*fakeEditor)(nil)
+	_ Workspace         = (*fakeWorkspace)(nil)
+	_ workspace.Session = (*stubSession)(nil)
+	_ Workspace         = (*workspace.Registry)(nil)
+)
 
 type fakeEditor struct {
 	path     string
@@ -223,6 +237,134 @@ func (f *fakeEditor) Reload() error {
 	return nil
 }
 
+// fakeWorkspace is the workspace harness: sources in registry order plus a
+// realistic save-all over their sessions (per-file results, stale refusals
+// and scripted errors, continue-on-error) and a reload that refreshes every
+// session.
+type fakeWorkspace struct {
+	sources  []workspace.Source
+	stale    map[string]bool
+	saveErrs map[string]error
+
+	saveCalls   int
+	reloadCalls int
+	reloadErr   error
+}
+
+// newFakeWorkspace wraps one config session as the user source.
+func newFakeWorkspace(ed *fakeEditor) *fakeWorkspace {
+	return &fakeWorkspace{sources: []workspace.Source{{
+		ID:       workspace.IDUser,
+		Path:     ed.Path(),
+		Kind:     workspace.KindUser,
+		Schema:   workspace.SchemaOmo,
+		Writable: true,
+		Session:  ed,
+	}}}
+}
+
+// addSource registers one more writable source after the user source.
+func (f *fakeWorkspace) addSource(id, path string, kind workspace.Kind, schema workspace.Schema, session workspace.Session) {
+	f.sources = append(f.sources, workspace.Source{
+		ID: id, Path: path, Kind: kind, Schema: schema, Writable: true, Session: session,
+	})
+}
+
+func (f *fakeWorkspace) Sources() []workspace.Source {
+	return append([]workspace.Source(nil), f.sources...)
+}
+
+func (f *fakeWorkspace) SaveAll() workspace.SaveResult {
+	f.saveCalls++
+	var result workspace.SaveResult
+	for _, source := range f.sources {
+		if !source.Writable || source.Session == nil || len(source.Session.DirtyPaths()) == 0 {
+			continue
+		}
+		if f.stale[source.ID] {
+			result.Files = append(result.Files, workspace.FileResult{
+				SourceID: source.ID, Path: source.Path, Stale: true,
+				Err: fmt.Errorf("saving %s: refusing stale file changed on disk since load", source.Path),
+			})
+			continue
+		}
+		if err := f.saveErrs[source.ID]; err != nil {
+			result.Files = append(result.Files, workspace.FileResult{
+				SourceID: source.ID, Path: source.Path,
+				Err: fmt.Errorf("saving %s: %w", source.Path, err),
+			})
+			continue
+		}
+		backup, err := source.Session.Save()
+		if err != nil {
+			result.Files = append(result.Files, workspace.FileResult{
+				SourceID: source.ID, Path: source.Path,
+				Err: fmt.Errorf("saving %s: %w", source.Path, err),
+			})
+			continue
+		}
+		result.Files = append(result.Files, workspace.FileResult{
+			SourceID: source.ID, Path: source.Path, Backup: backup,
+		})
+	}
+	return result
+}
+
+func (f *fakeWorkspace) Reload() error {
+	f.reloadCalls++
+	if f.reloadErr != nil {
+		return f.reloadErr
+	}
+	var errs []error
+	for _, source := range f.sources {
+		if source.Session == nil {
+			continue
+		}
+		if err := source.Session.Reload(); err != nil {
+			errs = append(errs, fmt.Errorf("reloading %s: %w", source.Path, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("reloading workspace: %w", errors.Join(errs...))
+	}
+	return nil
+}
+
+// stubSession is a bare workspace.Session for sources other than the config
+// document (a stand-in for the attached mcp.json session).
+type stubSession struct {
+	path      string
+	dirty     []string
+	backup    string
+	saveErr   error
+	reloadErr error
+
+	saved    bool
+	reloaded bool
+}
+
+func (s *stubSession) Path() string { return s.path }
+
+func (s *stubSession) DirtyPaths() []string { return append([]string(nil), s.dirty...) }
+
+func (s *stubSession) Save() (string, error) {
+	if s.saveErr != nil {
+		return "", s.saveErr
+	}
+	s.saved = true
+	s.dirty = nil
+	return s.backup, nil
+}
+
+func (s *stubSession) Reload() error {
+	if s.reloadErr != nil {
+		return s.reloadErr
+	}
+	s.reloaded = true
+	s.dirty = nil
+	return nil
+}
+
 type errExists string
 
 func (e errExists) Error() string { return "adding entry " + string(e) + ": already exists" }
@@ -263,8 +405,8 @@ func sendKeys(t *testing.T, m *Model, keys ...string) *Model {
 	return m
 }
 
-func newTestModel(f *fakeEditor) *Model {
-	m := New(f)
+func newTestModel(ws Workspace) *Model {
+	m := New(ws)
 	m.width = 100
 	m.height = 30
 	m.refresh()
@@ -293,7 +435,7 @@ func TestFocusTransitions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := sendKeys(t, newTestModel(newFakeEditor()), tt.keys...)
+			m := sendKeys(t, newTestModel(newFakeWorkspace(newFakeEditor())), tt.keys...)
 			if m.focus != tt.focus {
 				t.Errorf("focus = %v, want %v", m.focus, tt.focus)
 			}
@@ -304,7 +446,7 @@ func TestFocusTransitions(t *testing.T) {
 func TestNumberJumpSelectsSection(t *testing.T) {
 	// The harness mirrors the real surface: five jumpable sections plus
 	// Git plus one read-only section, reached via [/] and j/k.
-	m := newTestModel(newFakeEditor())
+	m := newTestModel(newFakeWorkspace(newFakeEditor()))
 	if len(m.sections) != 7 {
 		t.Fatalf("sections = %d, want 7 (5 + Git + read-only)", len(m.sections))
 	}
@@ -322,7 +464,7 @@ func TestNumberJumpSelectsSection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run("key "+tt.key, func(t *testing.T) {
-			m := sendKeys(t, newTestModel(newFakeEditor()), tt.key)
+			m := sendKeys(t, newTestModel(newFakeWorkspace(newFakeEditor())), tt.key)
 			if m.secIdx != tt.idx {
 				t.Errorf("secIdx = %d, want %d", m.secIdx, tt.idx)
 			}
@@ -334,7 +476,7 @@ func TestNumberJumpSelectsSection(t *testing.T) {
 }
 
 func TestBracketCyclesSections(t *testing.T) {
-	m := sendKeys(t, newTestModel(newFakeEditor()), "]")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(newFakeEditor())), "]")
 	if m.secIdx != 1 {
 		t.Errorf("secIdx = %d, want 1", m.secIdx)
 	}
@@ -353,7 +495,7 @@ func TestBracketCyclesSections(t *testing.T) {
 }
 
 func TestMoveBounds(t *testing.T) {
-	m := newTestModel(newFakeEditor())
+	m := newTestModel(newFakeWorkspace(newFakeEditor()))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "k", "k")
 	if m.entryIdx != 0 {
@@ -369,7 +511,7 @@ func TestMoveBounds(t *testing.T) {
 
 func TestEditScalarFlow(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "e")
 	if m.overlay != OverlayEdit {
@@ -392,7 +534,7 @@ func TestEditScalarFlow(t *testing.T) {
 
 func TestEditCancelKeepsValue(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "e", "x", "esc")
 	if m.overlay != OverlayNone {
@@ -405,7 +547,7 @@ func TestEditCancelKeepsValue(t *testing.T) {
 
 func TestEditEmptyShowsInlineError(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "e", "backspace", "backspace", "enter")
 	if m.overlay != OverlayEdit {
@@ -420,7 +562,7 @@ func TestEditEmptyShowsInlineError(t *testing.T) {
 }
 
 func TestEditBoolHintsSpace(t *testing.T) {
-	m := newTestModel(newFakeEditor())
+	m := newTestModel(newFakeWorkspace(newFakeEditor()))
 	m.focus = PaneEntries
 	m.entryIdx = 1
 	m.refresh()
@@ -435,7 +577,7 @@ func TestEditBoolHintsSpace(t *testing.T) {
 
 func TestToggleBoolFlow(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m.entryIdx = 1
 	m.refresh()
@@ -453,7 +595,7 @@ func TestToggleBoolFlow(t *testing.T) {
 
 func TestToggleNonBoolFlashes(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, " ")
 	if len(f.toggles) != 0 {
@@ -466,7 +608,7 @@ func TestToggleNonBoolFlashes(t *testing.T) {
 
 func TestAddFlow(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "a")
 	if m.overlay != OverlayAdd {
@@ -486,7 +628,7 @@ func TestAddFlow(t *testing.T) {
 
 func TestAddDuplicateStaysOpen(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "a", "k", "1", "enter")
 	if m.overlay != OverlayAdd {
@@ -499,7 +641,7 @@ func TestAddDuplicateStaysOpen(t *testing.T) {
 
 func TestAddCancel(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "a", "esc")
 	if m.overlay != OverlayNone || len(f.adds) != 0 {
@@ -509,7 +651,7 @@ func TestAddCancel(t *testing.T) {
 
 func TestDeleteFlow(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "d")
 	if m.overlay != OverlayConfirm || m.confirmKind != confirmDelete {
@@ -529,7 +671,7 @@ func TestDeleteFlow(t *testing.T) {
 
 func TestDeleteCancelKeepsEntry(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "d", "esc")
 	if len(f.removes) != 0 {
@@ -542,7 +684,7 @@ func TestDeleteCancelKeepsEntry(t *testing.T) {
 
 func TestSaveCleanFlashes(t *testing.T) {
 	f := newFakeEditor()
-	m := sendKeys(t, newTestModel(f), "s")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(f)), "s")
 	if m.overlay != OverlayNone {
 		t.Errorf("overlay = %v, want none when clean", m.overlay)
 	}
@@ -557,7 +699,7 @@ func TestSaveCleanFlashes(t *testing.T) {
 func TestSaveDirtyConfirmReportsBackup(t *testing.T) {
 	f := newFakeEditor()
 	f.dirty = []string{"/models/k1"}
-	m := sendKeys(t, newTestModel(f), "s")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(f)), "s")
 	if m.overlay != OverlayConfirm || m.confirmKind != confirmSave {
 		t.Fatalf("overlay = %v kind = %v", m.overlay, m.confirmKind)
 	}
@@ -578,7 +720,7 @@ func TestSaveErrorOpensPopup(t *testing.T) {
 	f := newFakeEditor()
 	f.dirty = []string{"/models/k1"}
 	f.saveErr = errSave("disk full")
-	m := sendKeys(t, newTestModel(f), "s", "enter")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(f)), "s", "enter")
 	if m.overlay != OverlayError {
 		t.Fatalf("overlay = %v, want error", m.overlay)
 	}
@@ -600,7 +742,7 @@ func (e errSave) Error() string { return string(e) }
 
 func TestReloadClean(t *testing.T) {
 	f := newFakeEditor()
-	m := sendKeys(t, newTestModel(f), "r")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(f)), "r")
 	if !f.reloaded {
 		t.Error("expected reload when clean")
 	}
@@ -612,7 +754,7 @@ func TestReloadClean(t *testing.T) {
 func TestReloadDirtyConfirms(t *testing.T) {
 	f := newFakeEditor()
 	f.dirty = []string{"/models/k1"}
-	m := sendKeys(t, newTestModel(f), "r")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(f)), "r")
 	if m.overlay != OverlayConfirm || m.confirmKind != confirmReload {
 		t.Fatalf("overlay = %v kind = %v", m.overlay, m.confirmKind)
 	}
@@ -630,7 +772,7 @@ func TestReloadDirtyConfirms(t *testing.T) {
 }
 
 func TestQuitClean(t *testing.T) {
-	m := newTestModel(newFakeEditor())
+	m := newTestModel(newFakeWorkspace(newFakeEditor()))
 	model, cmd := m.Update(keyMsg("q"))
 	_ = model
 	if cmd == nil {
@@ -644,7 +786,7 @@ func TestQuitClean(t *testing.T) {
 func TestQuitDirtyConfirms(t *testing.T) {
 	f := newFakeEditor()
 	f.dirty = []string{"/models/k1"}
-	m := sendKeys(t, newTestModel(f), "q")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(f)), "q")
 	if m.overlay != OverlayConfirm || m.confirmKind != confirmQuit {
 		t.Fatalf("overlay = %v kind = %v", m.overlay, m.confirmKind)
 	}
@@ -673,7 +815,7 @@ func TestQuitDirtyConfirms(t *testing.T) {
 
 func TestReadOnlySectionBlocked(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	// "[" from the first section wraps to the last one: the $schema
 	// read-only section. Telemetry and Git stay editable toggles.
 	m = sendKeys(t, m, "[", "enter")
@@ -697,7 +839,7 @@ func TestReadOnlySectionBlocked(t *testing.T) {
 func TestDirtyRendering(t *testing.T) {
 	f := newFakeEditor()
 	f.dirty = []string{"/models/k1", "/models/b1"}
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	view := m.View()
 	if !strings.Contains(view, "dirty (2)") {
 		t.Errorf("view missing dirty count:\n%s", view)
@@ -715,7 +857,7 @@ func TestDirtyRendering(t *testing.T) {
 }
 
 func TestFilterFlow(t *testing.T) {
-	m := newTestModel(newFakeEditor())
+	m := newTestModel(newFakeWorkspace(newFakeEditor()))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "/", "k")
 	if !m.filterMode || m.filter != "k" {
@@ -743,7 +885,7 @@ func TestFilterFlow(t *testing.T) {
 }
 
 func TestFilterEscapeExitsMode(t *testing.T) {
-	m := newTestModel(newFakeEditor())
+	m := newTestModel(newFakeWorkspace(newFakeEditor()))
 	m.focus = PaneEntries
 	// Enter filter mode, type text, then Escape: must clear AND exit.
 	m = sendKeys(t, m, "/", "m", "o")
@@ -774,7 +916,7 @@ func TestFilterEscapeExitsMode(t *testing.T) {
 		t.Fatalf("focus = %v, want entries after jump", m.focus)
 	}
 	// Esc on an empty filter in filter mode also exits.
-	m2 := newTestModel(newFakeEditor())
+	m2 := newTestModel(newFakeWorkspace(newFakeEditor()))
 	m2.focus = PaneEntries
 	m2 = sendKeys(t, m2, "/", "esc")
 	if m2.filterMode {
@@ -788,7 +930,7 @@ func TestFilterEscapeExitsMode(t *testing.T) {
 
 func TestOverlayEscapeClosesAll(t *testing.T) {
 	// Help closes on esc.
-	m := sendKeys(t, newTestModel(newFakeEditor()), "?")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(newFakeEditor())), "?")
 	m = sendKeys(t, m, "esc")
 	if m.overlay != OverlayNone {
 		t.Errorf("help esc: overlay = %v, want none", m.overlay)
@@ -796,26 +938,26 @@ func TestOverlayEscapeClosesAll(t *testing.T) {
 	// Confirm (save) closes on esc.
 	f := newFakeEditor()
 	f.dirty = []string{"/models/k1"}
-	m = sendKeys(t, newTestModel(f), "s", "esc")
+	m = sendKeys(t, newTestModel(newFakeWorkspace(f)), "s", "esc")
 	if m.overlay != OverlayNone {
 		t.Errorf("confirm esc: overlay = %v, want none", m.overlay)
 	}
 	// Edit closes on esc.
-	m = newTestModel(newFakeEditor())
+	m = newTestModel(newFakeWorkspace(newFakeEditor()))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "e", "esc")
 	if m.overlay != OverlayNone {
 		t.Errorf("edit esc: overlay = %v, want none", m.overlay)
 	}
 	// Add closes on esc.
-	m = newTestModel(newFakeEditor())
+	m = newTestModel(newFakeWorkspace(newFakeEditor()))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "a", "esc")
 	if m.overlay != OverlayNone {
 		t.Errorf("add esc: overlay = %v, want none", m.overlay)
 	}
 	// Delete confirm closes on esc.
-	m = newTestModel(newFakeEditor())
+	m = newTestModel(newFakeWorkspace(newFakeEditor()))
 	m.focus = PaneEntries
 	m = sendKeys(t, m, "d", "esc")
 	if m.overlay != OverlayNone {
@@ -825,7 +967,7 @@ func TestOverlayEscapeClosesAll(t *testing.T) {
 	fe := newFakeEditor()
 	fe.dirty = []string{"/models/k1"}
 	fe.saveErr = errSave("disk full")
-	m = sendKeys(t, newTestModel(fe), "s", "enter")
+	m = sendKeys(t, newTestModel(newFakeWorkspace(fe)), "s", "enter")
 	if m.overlay != OverlayError {
 		t.Fatalf("expected error popup, got %v", m.overlay)
 	}
@@ -836,7 +978,7 @@ func TestOverlayEscapeClosesAll(t *testing.T) {
 }
 
 func TestHelpOverlay(t *testing.T) {
-	m := sendKeys(t, newTestModel(newFakeEditor()), "?")
+	m := sendKeys(t, newTestModel(newFakeWorkspace(newFakeEditor())), "?")
 	if m.overlay != OverlayHelp {
 		t.Fatalf("overlay = %v, want help", m.overlay)
 	}
@@ -851,7 +993,7 @@ func TestHelpOverlay(t *testing.T) {
 
 func TestDetailEditAndToggle(t *testing.T) {
 	f := newFakeEditor()
-	m := newTestModel(f)
+	m := newTestModel(newFakeWorkspace(f))
 	m.focus = PaneEntries
 	m.entryIdx = 3
 	m.refresh()
@@ -868,7 +1010,7 @@ func TestDetailEditAndToggle(t *testing.T) {
 	}
 	m = sendKeys(t, m, "esc")
 
-	m2 := newTestModel(f)
+	m2 := newTestModel(newFakeWorkspace(f))
 	m2.focus = PaneEntries
 	m2.entryIdx = 1
 	m2.refresh()
@@ -879,7 +1021,7 @@ func TestDetailEditAndToggle(t *testing.T) {
 }
 
 func TestTerminalTooSmall(t *testing.T) {
-	m := newTestModel(newFakeEditor())
+	m := newTestModel(newFakeWorkspace(newFakeEditor()))
 	m.width = 40
 	m.height = 10
 	if !strings.Contains(m.View(), "Terminal too small") {
@@ -888,7 +1030,7 @@ func TestTerminalTooSmall(t *testing.T) {
 }
 
 func TestWindowSizeMsg(t *testing.T) {
-	m := New(newFakeEditor())
+	m := New(newFakeWorkspace(newFakeEditor()))
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = model.(*Model)
 	if m.width != 100 || m.height != 30 {
@@ -903,9 +1045,238 @@ func TestWindowSizeMsg(t *testing.T) {
 }
 
 func TestCtrlCQuits(t *testing.T) {
-	m := newTestModel(newFakeEditor())
+	m := newTestModel(newFakeWorkspace(newFakeEditor()))
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("expected quit command on ctrl+c")
+	}
+}
+
+func TestDirtyCountAggregatesSources(t *testing.T) {
+	f := newFakeEditor()
+	f.dirty = []string{"/models/k1", "/models/b1"}
+	ws := newFakeWorkspace(f)
+	mcp := &stubSession{path: "/tmp/agent/mcp.json", dirty: []string{"/mcpServers/fetch"}}
+	ws.addSource(workspace.IDMCP, mcp.path, workspace.KindExternal, workspace.SchemaMCPServers, mcp)
+	m := newTestModel(ws)
+	if got := m.dirtyCount(); got != 3 {
+		t.Fatalf("dirtyCount() = %d, want 3", got)
+	}
+	if view := m.View(); !strings.Contains(view, "dirty (3)") {
+		t.Errorf("view missing aggregate dirty count:\n%s", view)
+	}
+	m = sendKeys(t, m, "s")
+	if !strings.Contains(m.confirmText, "Save 3 changes?") {
+		t.Errorf("confirmText = %q, want all three changes", m.confirmText)
+	}
+}
+
+func TestSaveAllReportsEveryFile(t *testing.T) {
+	f := newFakeEditor()
+	f.dirty = []string{"/models/k1"}
+	ws := newFakeWorkspace(f)
+	mcp := &stubSession{path: "/tmp/agent/mcp.json", dirty: []string{"/mcpServers/fetch"}, backup: "/tmp/agent/mcp.json.bak.1"}
+	ws.addSource(workspace.IDMCP, mcp.path, workspace.KindExternal, workspace.SchemaMCPServers, mcp)
+	m := newTestModel(ws)
+	m = sendKeys(t, m, "s", "enter")
+	if ws.saveCalls != 1 {
+		t.Fatalf("saveCalls = %d, want 1", ws.saveCalls)
+	}
+	if !f.saved || !mcp.saved {
+		t.Fatalf("saved flags: user=%v mcp=%v, want both saved", f.saved, mcp.saved)
+	}
+	if len(f.DirtyPaths()) != 0 || len(mcp.DirtyPaths()) != 0 {
+		t.Errorf("dirty after save: %v %v, want none", f.DirtyPaths(), mcp.DirtyPaths())
+	}
+	if got := m.dirtyCount(); got != 0 {
+		t.Errorf("dirtyCount() = %d, want 0", got)
+	}
+	for _, want := range []string{"saved 2 files", f.backup, mcp.backup} {
+		if !strings.Contains(m.status, want) {
+			t.Errorf("status = %q, want it to contain %q", m.status, want)
+		}
+	}
+}
+
+func TestStaleSaveSurfacesError(t *testing.T) {
+	f := newFakeEditor()
+	f.dirty = []string{"/models/k1"}
+	ws := newFakeWorkspace(f)
+	mcp := &stubSession{path: "/tmp/agent/mcp.json", dirty: []string{"/mcpServers/fetch"}}
+	ws.addSource(workspace.IDMCP, mcp.path, workspace.KindExternal, workspace.SchemaMCPServers, mcp)
+	ws.stale = map[string]bool{workspace.IDMCP: true}
+	m := newTestModel(ws)
+	m = sendKeys(t, m, "s", "enter")
+	if m.overlay != OverlayError {
+		t.Fatalf("overlay = %v, want error overlay", m.overlay)
+	}
+	if !strings.Contains(m.errorText, "stale") || !strings.Contains(m.errorText, mcp.path) {
+		t.Errorf("errorText = %q, want the stale path", m.errorText)
+	}
+	if !strings.Contains(m.View(), "stale") {
+		t.Errorf("view does not surface the stale error:\n%s", m.View())
+	}
+	if len(mcp.DirtyPaths()) == 0 {
+		t.Error("stale refusal must keep the unsaved edits")
+	}
+	if !f.saved {
+		t.Error("the sibling file must still save")
+	}
+}
+
+func TestSavePartialFailureKeepsFailedDirty(t *testing.T) {
+	f := newFakeEditor()
+	f.dirty = []string{"/models/k1"}
+	ws := newFakeWorkspace(f)
+	ws.saveErrs = map[string]error{workspace.IDUser: errSave("disk full")}
+	mcp := &stubSession{path: "/tmp/agent/mcp.json", dirty: []string{"/mcpServers/fetch"}, backup: "/tmp/agent/mcp.json.bak.1"}
+	ws.addSource(workspace.IDMCP, mcp.path, workspace.KindExternal, workspace.SchemaMCPServers, mcp)
+	m := newTestModel(ws)
+	m = sendKeys(t, m, "s", "enter")
+	if m.overlay != OverlayError || !strings.Contains(m.errorText, "disk full") {
+		t.Fatalf("overlay = %v errorText = %q, want a disk-full error", m.overlay, m.errorText)
+	}
+	if len(f.DirtyPaths()) == 0 {
+		t.Error("failed file must keep its dirty paths")
+	}
+	if !mcp.saved {
+		t.Error("the sibling file must still save")
+	}
+}
+
+func TestReloadErrorOpensPopup(t *testing.T) {
+	ws := newFakeWorkspace(newFakeEditor())
+	ws.reloadErr = errSave("reload boom")
+	m := sendKeys(t, newTestModel(ws), "r")
+	if m.overlay != OverlayError || !strings.Contains(m.errorText, "reload boom") {
+		t.Fatalf("overlay = %v errorText = %q", m.overlay, m.errorText)
+	}
+}
+
+// writeFixture writes one synthetic config file, creating its directory.
+func writeFixture(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// realRegistryFixture builds the real workspace registry over a synthetic
+// home (user omo.jsonc + mcp.json) and attaches the mcpfile session at the
+// seam main.go wires, returning the registry, the mcp session, and both
+// paths.
+func realRegistryFixture(t *testing.T) (*workspace.Registry, *mcpfile.Session, string, string) {
+	t.Helper()
+	home := t.TempDir()
+	agentDir := filepath.Join(home, ".omo", "agent")
+	userPath := filepath.Join(home, ".omo", "omo.jsonc")
+	mcpPath := filepath.Join(agentDir, "mcp.json")
+	cwd := filepath.Join(home, "work")
+	writeFixture(t, userPath, `{"models":{"k3":{"model":"acme/code-large"}},"telemetry":{"enabled":false}}`)
+	writeFixture(t, mcpPath, `{"mcpServers":{"fetch":{"type":"stdio","command":"npx"}}}`)
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", cwd, err)
+	}
+	reg := workspace.NewRegistry(workspace.RegistryConfig{HomeDir: home, Cwd: cwd, AgentDir: agentDir})
+	if _, ok := reg.Source(workspace.IDUser); !ok {
+		t.Fatalf("user source missing; diagnostics: %v", reg.Diagnostics())
+	}
+	if _, ok := reg.Source(workspace.IDMCP); !ok {
+		t.Fatalf("mcp source missing; diagnostics: %v", reg.Diagnostics())
+	}
+	session, err := mcpfile.Load(mcpPath)
+	if err != nil {
+		t.Fatalf("mcpfile.Load() error = %v", err)
+	}
+	if err := reg.AttachSession(workspace.IDMCP, session); err != nil {
+		t.Fatalf("AttachSession() error = %v", err)
+	}
+	return reg, session, userPath, mcpPath
+}
+
+func TestRealRegistrySaveFlow(t *testing.T) {
+	reg, _, userPath, _ := realRegistryFixture(t)
+	m := newTestModel(reg)
+	if got := m.activePath(); got != userPath {
+		t.Errorf("activePath() = %q, want %q", got, userPath)
+	}
+	for _, want := range []string{"Models", "Telemetry"} {
+		if !strings.Contains(m.View(), want) {
+			t.Errorf("view missing %q:\n%s", want, m.View())
+		}
+	}
+	m = sendKeys(t, m, "5", " ")
+	if got := m.dirtyCount(); got != 1 {
+		t.Fatalf("dirty count = %d, want 1", got)
+	}
+	m = sendKeys(t, m, "s", "enter")
+	if m.overlay != OverlayNone {
+		t.Fatalf("overlay = %v, errorText = %q", m.overlay, m.errorText)
+	}
+	if !strings.Contains(m.status, "saved + backup") {
+		t.Errorf("status = %q, want the backup report", m.status)
+	}
+	if got := m.dirtyCount(); got != 0 {
+		t.Errorf("dirty count after save = %d, want 0", got)
+	}
+	raw, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("reading saved config: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("saved config is not JSON: %v\n%s", err, raw)
+	}
+	telemetry, _ := doc["telemetry"].(map[string]any)
+	if enabled, _ := telemetry["enabled"].(bool); !enabled {
+		t.Errorf("telemetry.enabled = %v, want true\n%s", telemetry["enabled"], raw)
+	}
+	backups, err := filepath.Glob(userPath + ".bak.*")
+	if err != nil {
+		t.Fatalf("globbing backups: %v", err)
+	}
+	if len(backups) != 1 {
+		t.Errorf("backup count = %d (%v), want 1", len(backups), backups)
+	}
+}
+
+func TestRealRegistryStaleRefusal(t *testing.T) {
+	reg, session, _, mcpPath := realRegistryFixture(t)
+	if err := session.AddServer("late", "stdio"); err != nil {
+		t.Fatalf("AddServer() error = %v", err)
+	}
+	if err := session.SetField("late", "command", "npx"); err != nil {
+		t.Fatalf("SetField() error = %v", err)
+	}
+	tampered := []byte("{\"mcpServers\":{\"fetch\":{\"type\":\"stdio\",\"command\":\"npx\"}},\"settings\":{}}\n")
+	if err := os.WriteFile(mcpPath, tampered, 0o644); err != nil {
+		t.Fatalf("tampering mcp.json: %v", err)
+	}
+	m := newTestModel(reg)
+	if got := m.dirtyCount(); got == 0 {
+		t.Fatal("expected the edited mcp session to be dirty")
+	}
+	m = sendKeys(t, m, "s", "enter")
+	if m.overlay != OverlayError {
+		t.Fatalf("overlay = %v, want error overlay", m.overlay)
+	}
+	if !strings.Contains(m.errorText, "stale") || !strings.Contains(m.errorText, mcpPath) {
+		t.Errorf("errorText = %q, want the stale path", m.errorText)
+	}
+	if !strings.Contains(m.View(), "stale") {
+		t.Errorf("view does not surface the stale error:\n%s", m.View())
+	}
+	if len(session.DirtyPaths()) == 0 {
+		t.Error("stale refusal must keep the unsaved edits")
+	}
+	after, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatalf("reading tampered mcp.json: %v", err)
+	}
+	if !bytes.Equal(after, tampered) {
+		t.Errorf("refused save touched the file:\ngot  %q\nwant %q", after, tampered)
 	}
 }

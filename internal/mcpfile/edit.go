@@ -76,6 +76,7 @@ func (s *Session) AddServer(name, typ string) error {
 	if err := s.doc.Add(serverPointer(name), entry); err != nil {
 		return fmt.Errorf("adding server %q: %w", name, err)
 	}
+	s.markDirty(serverPointer(name))
 	return nil
 }
 
@@ -87,6 +88,7 @@ func (s *Session) RemoveServer(name string) error {
 	if err := s.doc.Remove(serverPointer(name)); err != nil {
 		return fmt.Errorf("removing mcpServers.%s: %w", name, err)
 	}
+	s.markDirty(serverPointer(name))
 	return nil
 }
 
@@ -120,6 +122,8 @@ func (s *Session) RenameServer(oldName, newName string) (RenameResult, error) {
 	if err := s.doc.Remove(serverPointer(oldName)); err != nil {
 		return RenameResult{}, fmt.Errorf("renaming server %q: %w", oldName, err)
 	}
+	s.markDirty(serverPointer(oldName))
+	s.markDirty(serverPointer(newName))
 	return RenameResult{
 		OldName:    oldName,
 		NewName:    newName,
@@ -136,10 +140,9 @@ func (s *Session) writeField(server, field string, value any) error {
 		if err := s.doc.Set(pointer, value); err != nil {
 			return fmt.Errorf("setting mcpServers.%s.%s: %w", server, field, err)
 		}
-		return nil
-	}
-	if err := s.doc.Add(pointer, value); err != nil {
+	} else if err := s.doc.Add(pointer, value); err != nil {
 		return fmt.Errorf("setting mcpServers.%s.%s: %w", server, field, err)
 	}
+	s.markDirty(pointer)
 	return nil
 }
