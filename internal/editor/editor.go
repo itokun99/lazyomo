@@ -29,16 +29,20 @@ import (
 	"github.com/itokun99/lazyomo/internal/omodit"
 )
 
-// SectionID names one editable section of the configuration.
+// SectionID names one section of the configuration: an editable section
+// or one read-only section per remaining top-level key.
 type SectionID string
 
-// The five sections of the v1 editable surface, in display order.
+// The six sections of the editable surface, in display order: the five
+// v1 sections plus git_master. Read-only sections for every other
+// present top-level key are appended after these, sorted by key.
 const (
 	SectionModels        SectionID = "models"
 	SectionModelProfiles SectionID = "model_profiles"
 	SectionAgents        SectionID = "agents"
 	SectionCategories    SectionID = "categories"
 	SectionTelemetry     SectionID = "telemetry"
+	SectionGitMaster     SectionID = "git_master"
 )
 
 // EntryKind classifies an entry row of a section.
@@ -132,6 +136,7 @@ var sectionOrder = []SectionID{
 	SectionAgents,
 	SectionCategories,
 	SectionTelemetry,
+	SectionGitMaster,
 }
 
 var sectionTitles = map[SectionID]string{
@@ -140,6 +145,7 @@ var sectionTitles = map[SectionID]string{
 	SectionAgents:        "Agents",
 	SectionCategories:    "Categories",
 	SectionTelemetry:     "Telemetry",
+	SectionGitMaster:     "Git",
 }
 
 var sectionRoots = map[SectionID]string{
@@ -148,21 +154,41 @@ var sectionRoots = map[SectionID]string{
 	SectionAgents:        "/agents",
 	SectionCategories:    "/categories",
 	SectionTelemetry:     "/telemetry",
+	SectionGitMaster:     "/git_master",
 }
 
+// editableSections reports whether a top-level key has an editable section.
+// Every other present top-level key renders as its own read-only section.
+var editableSections = map[string]struct{}{
+	"models":         {},
+	"model_profiles": {},
+	"agents":         {},
+	"categories":     {},
+	"telemetry":      {},
+	"git_master":     {},
+}
+
+// gitMasterKeys are the fixed toggle rows of the Git section.
+var gitMasterKeys = []string{"commit_footer", "include_co_authored_by"}
+
 // Sections returns the editable sections in display order, rebuilt from
-// the current document.
+// the current document, followed by one read-only section per remaining
+// present top-level key (sorted by key).
 func (e *Editor) Sections() []Section {
 	sections := make([]Section, 0, len(sectionOrder))
 	for _, id := range sectionOrder {
 		section := Section{ID: id, Title: sectionTitles[id]}
-		if id == SectionTelemetry {
+		switch id {
+		case SectionTelemetry:
 			section.Entries = []Entry{e.telemetryEntry()}
-		} else {
+		case SectionGitMaster:
+			section.Entries = e.gitMasterEntries()
+		default:
 			section.Entries = e.blockEntries(id)
 		}
 		sections = append(sections, section)
 	}
+	sections = append(sections, e.readOnlySections()...)
 	return sections
 }
 
@@ -223,6 +249,71 @@ func (e *Editor) telemetryEntry() Entry {
 	}
 }
 
+// gitMasterEntries are the two git_master switches; they are shown even
+// when the block is missing, defaulting to false, so the first
+// space-toggle can create the block.
+func (e *Editor) gitMasterEntries() []Entry {
+	entries := make([]Entry, 0, len(gitMasterKeys))
+	for _, key := range gitMasterKeys {
+		path := "/git_master/" + key
+		value := "false"
+		if raw, found := e.doc.Get(path); found {
+			if b, ok := raw.(bool); ok {
+				value = strconv.FormatBool(b)
+			}
+		}
+		entries = append(entries, Entry{
+			Key:   key,
+			Path:  path,
+			Kind:  KindBool,
+			Value: value,
+			Dirty: e.isDirtyAt(path),
+		})
+	}
+	return entries
+}
+
+// readOnlySections builds one read-only section per present top-level key
+// outside the editable surface, in sorted key order. Each section carries
+// a single entry previewing the key's value; Detail expands it into
+// read-only lines.
+func (e *Editor) readOnlySections() []Section {
+	raw, found := e.doc.Get("")
+	if !found {
+		return nil
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	var sections []Section
+	for _, key := range sortedKeys(obj) {
+		if _, editable := editableSections[key]; editable {
+			continue
+		}
+		path := "/" + escapeToken(key)
+		value := obj[key]
+		kind := KindScalar
+		if isBool(value) {
+			kind = KindBool
+		}
+		sections = append(sections, Section{
+			ID:    SectionID(key),
+			Title: key,
+			Entries: []Entry{{
+				Key:      key,
+				Path:     path,
+				Kind:     kind,
+				Value:    displayValue(value),
+				Dirty:    e.isDirtyAt(path),
+				ReadOnly: true,
+			}},
+			ReadOnly: true,
+		})
+	}
+	return sections
+}
+
 // fieldSpec describes one detail line of a section entry.
 type fieldSpec struct {
 	label   string
@@ -257,7 +348,7 @@ var detailFields = map[SectionID][]fieldSpec{
 func (e *Editor) Detail(section SectionID, key string) (Detail, error) {
 	root, ok := sectionRoots[section]
 	if !ok {
-		return Detail{}, fmt.Errorf("unknown section %q", section)
+		return e.readOnlyDetail(string(section), key)
 	}
 	if section == SectionTelemetry {
 		if key != "enabled" {
@@ -279,6 +370,9 @@ func (e *Editor) Detail(section SectionID, key string) (Detail, error) {
 				Editable: true,
 			}},
 		}, nil
+	}
+	if section == SectionGitMaster {
+		return e.gitMasterDetail(key)
 	}
 	path := root + "/" + escapeToken(key)
 	raw, found := e.doc.Get(path)
@@ -340,6 +434,79 @@ func (e *Editor) Detail(section SectionID, key string) (Detail, error) {
 		})
 	}
 	return Detail{Title: key, Lines: lines}, nil
+}
+
+// gitMasterDetail is the detail view of one Git toggle row. Unknown keys
+// are errors; the value defaults to false when the block or key is
+// absent.
+func (e *Editor) gitMasterDetail(key string) (Detail, error) {
+	known := false
+	for _, name := range gitMasterKeys {
+		if key == name {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return Detail{}, fmt.Errorf("no git_master entry %q", key)
+	}
+	path := "/git_master/" + key
+	value := "false"
+	if raw, found := e.doc.Get(path); found {
+		if b, ok := raw.(bool); ok {
+			value = strconv.FormatBool(b)
+		}
+	}
+	return Detail{
+		Title: key,
+		Lines: []DetailLine{{
+			Label:    key,
+			Path:     path,
+			Value:    value,
+			Bool:     true,
+			Editable: true,
+		}},
+	}, nil
+}
+
+// readOnlyDetail is the detail view of one read-only top-level key.
+// Object values expand to one read-only line per member in sorted key
+// order; every other JSON type renders as a single read-only line
+// previewing the value. Unknown keys are errors.
+func (e *Editor) readOnlyDetail(topKey, key string) (Detail, error) {
+	if _, editable := editableSections[topKey]; editable {
+		return Detail{}, fmt.Errorf("unknown section %q", SectionID(topKey))
+	}
+	path := "/" + escapeToken(topKey)
+	raw, found := e.doc.Get(path)
+	if !found {
+		return Detail{}, fmt.Errorf("unknown section %q", SectionID(topKey))
+	}
+	if key != topKey {
+		return Detail{}, fmt.Errorf("no %s entry %q", topKey, key)
+	}
+	if obj, ok := raw.(map[string]any); ok {
+		lines := make([]DetailLine, 0, len(obj))
+		for _, name := range sortedKeys(obj) {
+			value := obj[name]
+			lines = append(lines, DetailLine{
+				Label: name,
+				Path:  path + "/" + escapeToken(name),
+				Value: displayValue(value),
+				Bool:  isBool(value),
+			})
+		}
+		return Detail{Title: key, Lines: lines}, nil
+	}
+	return Detail{
+		Title: key,
+		Lines: []DetailLine{{
+				Label: key,
+				Path:  path,
+				Value: displayValue(raw),
+				Bool:  isBool(raw),
+			}},
+	}, nil
 }
 
 // stringField returns the named string member of obj, or "".
