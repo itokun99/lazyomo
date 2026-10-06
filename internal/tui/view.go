@@ -75,6 +75,12 @@ func (m *Model) entriesTitle() string {
 			}
 			return "MCP servers"
 		}
+		if m.sideProviders() {
+			return "Connections · derived"
+		}
+		if m.sideCatalog() {
+			return "Catalog · derived"
+		}
 		if row.hasFuture {
 			return row.label
 		}
@@ -90,6 +96,9 @@ func (m *Model) entriesTitle() string {
 func (m *Model) detailTitle() string {
 	if row := m.selSide(); row != nil && row.mcp {
 		return "Detail"
+	}
+	if m.sideDerived() {
+		return "Detail · derived"
 	}
 	ro := ""
 	if sec := m.curSection(); sec != nil && sec.ReadOnly {
@@ -176,6 +185,12 @@ func (m *Model) entryLines(inner int) []string {
 	if m.sideMCP() {
 		return m.mcpEntryLines(inner)
 	}
+	if m.sideProviders() {
+		return m.providerEntryLines(inner)
+	}
+	if m.sideCatalog() {
+		return m.catalogEntryLines(inner)
+	}
 	focused := m.focus == PaneEntries
 	if len(m.entries) == 0 {
 		return []string{m.styles.Help.Render(padRight("  (no entries)", inner))}
@@ -213,6 +228,12 @@ func (m *Model) entryLines(inner int) []string {
 func (m *Model) detailLines(inner int) []string {
 	if m.sideMCP() {
 		return m.mcpDetailLines(inner)
+	}
+	if m.sideProviders() {
+		return m.providerDetailLines(inner)
+	}
+	if m.sideCatalog() {
+		return m.catalogDetailLines(inner)
 	}
 	focused := m.focus == PaneDetail
 	if len(m.detail.Lines) == 0 {

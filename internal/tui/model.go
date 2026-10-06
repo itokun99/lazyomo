@@ -3,6 +3,7 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/itokun99/lazyomo/internal/derived"
 	"github.com/itokun99/lazyomo/internal/editor"
 	"github.com/itokun99/lazyomo/internal/mcpfile"
 	"github.com/itokun99/lazyomo/internal/workspace"
@@ -125,16 +126,29 @@ type Model struct {
 	mcpAddStage   int
 	mcpAddTypeIdx int
 	mcpAddType    string
-	editMCP       bool
-	editRename    bool
-	editServer    string
-	editField     string
-	editKind      mcpfile.FieldKind
-	revealText    string
-	pendingMCP    string
-	renameFrom    string
-	renameTo      string
-	helpScroll    int
+	// Derived providers/catalog state: explicit file paths plus the last
+	// loaded snapshots. Panes re-read on open so a changed file reflects
+	// on the next refresh; nothing derived is ever written.
+	modelsPath     string
+	storePath      string
+	providers      derived.ProvidersSnapshot
+	providersErr   string
+	providerRows   []providerRow
+	providerDetail []providerDetailLine
+	catalog        derived.CatalogSnapshot
+	catalogErr     string
+	catalogRows    []catalogRow
+	catalogDetail  []catalogDetailLine
+	editMCP        bool
+	editRename     bool
+	editServer     string
+	editField      string
+	editKind       mcpfile.FieldKind
+	revealText     string
+	pendingMCP     string
+	renameFrom     string
+	renameTo       string
+	helpScroll     int
 
 	filter     string
 	filterMode bool
@@ -153,6 +167,7 @@ func New(ws Workspace) *Model {
 	m := &Model{ws: ws, styles: DefaultStyles(), focus: PaneSections}
 	m.bindConfig()
 	m.bindMCP()
+	m.bindDerived()
 	m.refresh()
 	return m
 }
@@ -232,6 +247,12 @@ func (m *Model) activePath() string {
 	if m.sideMCP() && m.mcpPath != "" {
 		return m.mcpPath
 	}
+	if m.sideProviders() && m.modelsPath != "" {
+		return m.modelsPath
+	}
+	if m.sideCatalog() && m.storePath != "" {
+		return m.storePath
+	}
 	if m.configPath == "" {
 		return "(no file)"
 	}
@@ -251,6 +272,14 @@ func (m *Model) refresh() {
 	m.secOffset = clampWindow(m.secOffset, sideCursorLine(m.groups, m.secIdx), m.secViewport(), sideTotalLines(m.groups))
 	if m.sideMCP() {
 		m.refreshMCP()
+		return
+	}
+	if m.sideProviders() {
+		m.refreshProviders()
+		return
+	}
+	if m.sideCatalog() {
+		m.refreshCatalog()
 		return
 	}
 	sec := m.curSection()

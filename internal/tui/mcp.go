@@ -91,6 +91,12 @@ func (m *Model) listLen() int {
 	if m.sideMCP() {
 		return len(m.mcpRows)
 	}
+	if m.sideProviders() {
+		return len(m.providerRows)
+	}
+	if m.sideCatalog() {
+		return len(m.catalogRows)
+	}
 	return len(m.entries)
 }
 
@@ -99,6 +105,12 @@ func (m *Model) detailListLen() int {
 	if m.sideMCP() {
 		return len(m.mcpDetail)
 	}
+	if m.sideProviders() {
+		return len(m.providerDetail)
+	}
+	if m.sideCatalog() {
+		return len(m.catalogDetail)
+	}
 	return len(m.detail.Lines)
 }
 
@@ -106,7 +118,7 @@ func (m *Model) detailListLen() int {
 // the fixed source-path header consumes one painted row.
 func (m *Model) detailListViewport() int {
 	v := m.detailViewport()
-	if m.sideMCP() {
+	if m.sideMCP() || m.sideDerived() {
 		v--
 	}
 	if v < 1 {
