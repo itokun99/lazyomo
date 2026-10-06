@@ -1,6 +1,6 @@
 {
   "name": "@itokun99/lazyomo",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "lazyomo — Go TUI editor for oh-my-openagent (omo) configs",
   "author": "Indrawan <me@indrawan.dev>",
   "license": "MIT",

@@ -2,43 +2,20 @@
 
 ## Unreleased
 
-- Repurpose lazyomo from config switcher to TUI editor for `~/.omo/omo.jsonc` (lazygit-style panes, section keymap, save with automatic timestamped backup).
-- Add `internal/editor` plus `internal/omodit` engine: comment-preserving JSONC load, Get, Set, Add, Remove, Save with atomic write and `<config>.bak.<UTC timestamp>` backup next to the file.
-- Remove old switcher packages (`internal/domain`, `internal/application`, `internal/infrastructure`, `internal/cli`): no switching, no `omo_configs` discovery, no `ConfigService` or `KnownGroups`.
-- Rename product from omo-switch to lazyomo (docs only, no behavior change).
-
-## [2.0.0] - 2026-06-04
+## [3.1.0] - 2026-10-06
 
 ### Added
-- Interactive TUI mode (Bubble Tea) as default
-- Search/filter configs with `/` key
-- Config detail view with `s` key
-- Help overlay with `?` key
-- Config validation with `v` key
-- Backup manager with `b` key
-- Config diff viewer with `d` key
-- Config info display with `i` key
-- Reload configs with `r` key
-- Cross-platform builds (macOS, Linux, Windows)
-- GitHub Actions release workflow
+- Two-document editing in one TUI: user `~/.omo/omo.jsonc` + `~/.omo/agent/mcp.json`, each with atomic save and timestamped backups
+- MCP servers pane: list / detail / add / edit / rename / remove / toggle, strict-JSON validation, secrets masked `•••` with explicit reveal
+- Read-only connections + model-catalog panes with provenance badges and refreshed-at, built from `models.json` / `models-store.json`
+- Read-only MCP tools pane per server, built from `cache/mcp-cache.json`
+- Fuzzy model picker overlay (`e` on model fields): refs-only in the models section, aliases elsewhere, unchanged-selection closes without a write
+- `git_master` section (commit_footer / commit_trailer toggles); `model_profile` accepts an existing profile key or a literal `provider/model` pin
+- New packages: `internal/derived` (comment-preserving derived readers), `internal/fuzzy` (stdlib DP matcher), `internal/workspace` (multi-file save + stale guard), `internal/mcpfile` (strict-JSON surface)
+- Spec v2 docs (`docs/spec-tui-v2.md`, `docs/spec-editor-v2.md`); v1 specs marked superseded; README + AGENTS knowledge bases refreshed
 
-### Changed
-- Rewritten from Node.js to Go
-- TUI mode is now default (no args)
-- CLI mode available via `--cli` flag
-- Layered architecture (domain/application/infrastructure/tui)
+### Fixed
+- First MCP server add is reachable when `mcp.json` does not exist yet
+- Catalog decode tolerates numeric epoch timestamps; junk model entries are skipped, never dropped
+- gofmt drift in editor and tui
 
-### Preserved
-- All CLI commands (--list, --current, show, alias)
-- Config discovery from ~/.config/opencode/omo_configs/
-- Schema validation before switching
-- Auto-backup before switching
-- Grouped display (Mono, Optimized, Low-Cost, Custom)
-
-## [1.0.0] - 2025-01-01
-
-### Added
-- Initial Node.js CLI implementation
-- Config discovery and switching
-- Schema validation
-- Auto-backup
