@@ -4,22 +4,34 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/itokun99/lazyomo/internal/editor"
+	"github.com/itokun99/lazyomo/internal/workspace"
 )
 
-// Editor mirrors the editor operations used by the TUI. The real
-// *editor.Editor is wired in cmd/lazyomo; tests use a fake.
-type Editor interface {
-	Path() string
+// Workspace is the TUI's data layer: the registered configuration sources
+// with their provenance plus workspace-wide save and reload. The real
+// *workspace.Registry (with its attached sessions) is wired in cmd/lazyomo
+// only; tests use the fakeWorkspace harness.
+type Workspace interface {
+	Sources() []workspace.Source
+	SaveAll() workspace.SaveResult
+	Reload() error
+}
+
+// ConfigSurface is the editable section/entry surface a config source's
+// session exposes. The TUI binds the first registered source whose session
+// implements it as the active config document (the user omo.jsonc in the
+// default registry).
+type ConfigSurface interface {
 	Sections() []editor.Section
 	Detail(section editor.SectionID, key string) (editor.Detail, error)
 	SetScalar(path, value string) error
 	ToggleBool(path string) error
 	AddEntry(section editor.SectionID, key string) error
 	RemoveEntry(section editor.SectionID, key string) error
-	DirtyPaths() []string
-	Save() (string, error)
-	Reload() error
 }
+
+// Compile-time contract: the real editor is a config surface.
+var _ ConfigSurface = (*editor.Editor)(nil)
 
 // Pane is the focused zone.
 type Pane int
@@ -64,8 +76,12 @@ const (
 
 // Model is the Bubble Tea model for the lazyomo editor TUI.
 type Model struct {
-	ed     Editor
-	styles Styles
+	ws     Workspace
+	config ConfigSurface
+	// configPath is the path of the source backing config; the status line
+	// shows it as the active document.
+	configPath string
+	styles     Styles
 
 	sections []editor.Section
 	secIdx   int
@@ -102,11 +118,28 @@ type Model struct {
 	detailOff   int
 }
 
-// New creates a TUI model over ed.
-func New(ed Editor) *Model {
-	m := &Model{ed: ed, styles: DefaultStyles(), focus: PaneSections}
+// New creates a TUI model over ws.
+func New(ws Workspace) *Model {
+	m := &Model{ws: ws, styles: DefaultStyles(), focus: PaneSections}
+	m.bindConfig()
 	m.refresh()
 	return m
+}
+
+// bindConfig picks the active config document: the first registered source
+// whose session implements ConfigSurface. A workspace without one leaves
+// the sections pane empty.
+func (m *Model) bindConfig() {
+	if m.ws == nil {
+		return
+	}
+	for _, src := range m.ws.Sources() {
+		if surface, ok := src.Session.(ConfigSurface); ok {
+			m.config = surface
+			m.configPath = src.Path
+			return
+		}
+	}
 }
 
 // Init implements tea.Model.
@@ -135,19 +168,36 @@ func (m *Model) selLine() *editor.DetailLine {
 	return &m.detail.Lines[m.detailLn]
 }
 
+// dirtyCount totals the changed paths across every registered source, the
+// multi-document count the status line reports.
 func (m *Model) dirtyCount() int {
-	if m.ed == nil {
+	if m.ws == nil {
 		return 0
 	}
-	return len(m.ed.DirtyPaths())
+	total := 0
+	for _, source := range m.ws.Sources() {
+		if source.Session != nil {
+			total += len(source.Session.DirtyPaths())
+		}
+	}
+	return total
 }
 
-// refresh reloads sections, entries, and detail from the editor.
+// activePath names the document the sections pane edits.
+func (m *Model) activePath() string {
+	if m.configPath == "" {
+		return "(no file)"
+	}
+	return m.configPath
+}
+
+// refresh reloads sections, entries, and detail from the active config
+// surface.
 func (m *Model) refresh() {
-	if m.ed == nil {
+	if m.config == nil {
 		return
 	}
-	m.sections = m.ed.Sections()
+	m.sections = m.config.Sections()
 	m.secIdx = clamp(m.secIdx, len(m.sections))
 	sec := m.curSection()
 	m.entries = nil
@@ -159,7 +209,7 @@ func (m *Model) refresh() {
 	m.detailLn = 0
 	if sec != nil {
 		if e := m.selEntry(); e != nil {
-			if d, err := m.ed.Detail(sec.ID, e.Key); err == nil {
+			if d, err := m.config.Detail(sec.ID, e.Key); err == nil {
 				m.detail = d
 			}
 		}

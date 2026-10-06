@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/itokun99/lazyomo/internal/editor"
+	"github.com/itokun99/lazyomo/internal/workspace"
 )
 
 // Update implements tea.Model.
@@ -302,7 +303,7 @@ func (m *Model) toggle() {
 			m.status = "not a bool"
 			return
 		}
-		if err := m.ed.ToggleBool(e.Path); err != nil {
+		if err := m.config.ToggleBool(e.Path); err != nil {
 			m.status = "toggle failed: " + err.Error()
 			return
 		}
@@ -322,7 +323,7 @@ func (m *Model) toggle() {
 		m.status = "not editable"
 		return
 	}
-	if err := m.ed.ToggleBool(l.Path); err != nil {
+	if err := m.config.ToggleBool(l.Path); err != nil {
 		m.status = "toggle failed: " + err.Error()
 		return
 	}
@@ -344,7 +345,7 @@ func (m *Model) save() {
 func (m *Model) reload() {
 	n := m.dirtyCount()
 	if n == 0 {
-		if err := m.ed.Reload(); err != nil {
+		if err := m.ws.Reload(); err != nil {
 			m.overlay = OverlayError
 			m.errorText = "reload failed: " + err.Error()
 			return
@@ -428,26 +429,20 @@ func (m *Model) confirm() (tea.Model, tea.Cmd) {
 	m.confirmKind = confirmNone
 	switch kind {
 	case confirmSave:
-		backup, err := m.ed.Save()
-		if err != nil {
+		result := m.ws.SaveAll()
+		m.refresh()
+		if failed := saveFailure(result); failed != "" {
 			m.overlay = OverlayError
-			m.errorText = "save failed: " + err.Error()
+			m.errorText = "save failed: " + failed
 			return m, nil
 		}
-		m.refresh()
-		if backup == "" {
-			m.status = "saved"
-		} else {
-			m.status = "saved + backup " + backup
-		}
+		m.status = saveStatus(result)
 	case confirmReload:
-		n := m.dirtyCount()
-		if err := m.ed.Reload(); err != nil {
+		if err := m.ws.Reload(); err != nil {
 			m.overlay = OverlayError
 			m.errorText = "reload failed: " + err.Error()
 			return m, nil
 		}
-		_ = n
 		m.entryIdx = 0
 		m.filter = ""
 		m.refresh()
@@ -455,7 +450,7 @@ func (m *Model) confirm() (tea.Model, tea.Cmd) {
 	case confirmQuit:
 		return m, tea.Quit
 	case confirmDelete:
-		if err := m.ed.RemoveEntry(m.delSec, m.delKey); err != nil {
+		if err := m.config.RemoveEntry(m.delSec, m.delKey); err != nil {
 			m.status = "delete failed: " + err.Error()
 			return m, nil
 		}
@@ -470,7 +465,7 @@ func (m *Model) submitEdit() {
 		m.editErr = "value must not be empty"
 		return
 	}
-	if err := m.ed.SetScalar(m.editPath, m.editBuf); err != nil {
+	if err := m.config.SetScalar(m.editPath, m.editBuf); err != nil {
 		m.editErr = err.Error()
 		return
 	}
@@ -490,7 +485,7 @@ func (m *Model) submitAdd() {
 		m.addErr = "name must not be empty"
 		return
 	}
-	if err := m.ed.AddEntry(sec.ID, m.addBuf); err != nil {
+	if err := m.config.AddEntry(sec.ID, m.addBuf); err != nil {
 		m.addErr = err.Error()
 		return
 	}
@@ -531,4 +526,41 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refresh()
 	}
 	return m, nil
+}
+
+// saveFailure summarizes the failed files of a workspace save: stale
+// refusals and save errors, one entry each. It returns "" when every
+// attempted file saved cleanly.
+func saveFailure(result workspace.SaveResult) string {
+	parts := make([]string, 0, len(result.Files))
+	for _, file := range result.Files {
+		switch {
+		case file.Stale:
+			parts = append(parts, fmt.Sprintf("%s is stale (changed on disk since load); unsaved edits kept", file.Path))
+		case file.Err != nil:
+			parts = append(parts, file.Err.Error())
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+// saveStatus summarizes a clean workspace save: the backup path of a single
+// file, or the file count plus every backup for several files.
+func saveStatus(result workspace.SaveResult) string {
+	backups := make([]string, 0, len(result.Files))
+	for _, file := range result.Files {
+		if file.Backup != "" {
+			backups = append(backups, file.Backup)
+		}
+	}
+	switch {
+	case len(result.Files) == 1 && len(backups) == 1:
+		return "saved + backup " + backups[0]
+	case len(result.Files) == 1:
+		return "saved"
+	case len(backups) > 0:
+		return fmt.Sprintf("saved %d files (backups: %s)", len(result.Files), strings.Join(backups, ", "))
+	default:
+		return fmt.Sprintf("saved %d files", len(result.Files))
+	}
 }

@@ -176,7 +176,7 @@ func TestLoadRejectsMalformedShape(t *testing.T) {
 
 func TestNoOpRoundTrip(t *testing.T) {
 	session, path, original := loadCopy(t)
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	saved, err := os.ReadFile(path)
@@ -289,7 +289,7 @@ func TestSettingsReadOnlySurviveEdits(t *testing.T) {
 	if _, err := session.ToggleEnabled("epsilon"); err != nil {
 		t.Fatalf("ToggleEnabled() error = %v", err)
 	}
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -539,7 +539,7 @@ func TestAddServer(t *testing.T) {
 	if enabled, err := session.ToggleEnabled("x/y~z"); err != nil || !enabled {
 		t.Fatalf("ToggleEnabled(escaped name) = %v, %v; want true, nil", enabled, err)
 	}
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -591,7 +591,7 @@ func TestAddServerCreatesMissingFile(t *testing.T) {
 	}
 
 	// A save before any mutation must not create the file.
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() on empty session error = %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -607,7 +607,7 @@ func TestAddServerCreatesMissingFile(t *testing.T) {
 	if enabled, err := session.ToggleEnabled("first"); err != nil || !enabled {
 		t.Fatalf("ToggleEnabled() = %v, %v; want true, nil", enabled, err)
 	}
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -654,7 +654,7 @@ func TestAddServerAdoptsExternallyCreatedFile(t *testing.T) {
 	if _, ok := session.Server("external"); !ok {
 		t.Errorf("AddServer clobbered the externally created file")
 	}
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	reloaded, err := mcpfile.Load(path)
@@ -691,7 +691,7 @@ func TestRemoveServer(t *testing.T) {
 	if got := len(session.Servers()); got != 3 {
 		t.Errorf("Servers() count = %d, want 3", got)
 	}
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	reloaded, err := mcpfile.Load(path)
@@ -758,7 +758,7 @@ func TestRenameServer(t *testing.T) {
 	if _, err := session.RenameServer("gamma-two", "a/b~c"); err != nil {
 		t.Fatalf("RenameServer(escaped) error = %v", err)
 	}
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	reloaded, err := mcpfile.Load(path)
@@ -782,7 +782,7 @@ func TestStaleStateExternalWrite(t *testing.T) {
 		t.Fatalf("external write: %v", err)
 	}
 
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -822,7 +822,7 @@ func TestStrictOutputBytes(t *testing.T) {
 	if _, err := session.ToggleEnabled("qa-bytes"); err != nil {
 		t.Fatalf("ToggleEnabled() error = %v", err)
 	}
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -881,7 +881,7 @@ func TestAddEditToggle(t *testing.T) {
 		t.Errorf("qa-mcp env = %#v", server.Fields["env"])
 	}
 
-	if err := session.Save(); err != nil {
+	if _, err := session.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -1010,5 +1010,82 @@ func TestResolveAgentDir(t *testing.T) {
 	}
 	if want := filepath.Join(home, ".omo", "agent"); got != want {
 		t.Errorf("ResolveAgentDir() = %q, want %q", got, want)
+	}
+}
+
+// TestSessionSeam covers the workspace seam: dirty tracking, backup
+// reporting on Save, and Reload discarding unsaved edits.
+func TestSessionSeam(t *testing.T) {
+	session, path, _ := loadCopy(t)
+
+	// A freshly loaded session is clean.
+	if got := session.DirtyPaths(); len(got) != 0 {
+		t.Fatalf("DirtyPaths() after load = %v, want none", got)
+	}
+
+	// Edits accumulate deduplicated, sorted dirty pointers.
+	if err := session.SetField("alpha", "command", "npx"); err != nil {
+		t.Fatalf("SetField() error = %v", err)
+	}
+	if enabled, err := session.ToggleEnabled("gamma"); err != nil || !enabled {
+		t.Fatalf("ToggleEnabled() = %v, %v; want true, nil", enabled, err)
+	}
+	got := session.DirtyPaths()
+	if len(got) != 2 || got[0] != "/mcpServers/alpha/command" || got[1] != "/mcpServers/gamma/enabled" {
+		t.Fatalf("DirtyPaths() = %v, want the two edited pointers sorted", got)
+	}
+
+	// Save reports the timestamped backup it created and clears the dirty set.
+	before := len(backups(t, path))
+	backup, err := session.Save()
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	after := backups(t, path)
+	if len(after) != before+1 {
+		t.Fatalf("backup count = %d, want %d", len(after), before+1)
+	}
+	if backup != after[len(after)-1] {
+		t.Errorf("Save() backup = %q, want %q", backup, after[len(after)-1])
+	}
+	if got := session.DirtyPaths(); len(got) != 0 {
+		t.Fatalf("DirtyPaths() after Save = %v, want none", got)
+	}
+
+	// Reload discards unsaved edits and restores the file's state.
+	if err := session.SetField("alpha", "command", "uvx"); err != nil {
+		t.Fatalf("SetField() error = %v", err)
+	}
+	if err := session.Reload(); err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if got := session.DirtyPaths(); len(got) != 0 {
+		t.Fatalf("DirtyPaths() after Reload = %v, want none", got)
+	}
+	if server := mustServer(t, session, "alpha"); server.Preview() != "npx" {
+		t.Errorf("alpha command after Reload = %q, want npx", server.Preview())
+	}
+
+	// The first save that creates a file reports no backup.
+	missing := filepath.Join(t.TempDir(), "mcp.json")
+	fresh, err := mcpfile.Load(missing)
+	if err != nil {
+		t.Fatalf("Load(missing) error = %v", err)
+	}
+	if err := fresh.AddServer("first", "stdio"); err != nil {
+		t.Fatalf("AddServer() error = %v", err)
+	}
+	if err := fresh.SetField("first", "command", "npx"); err != nil {
+		t.Fatalf("SetField() error = %v", err)
+	}
+	backup, err = fresh.Save()
+	if err != nil {
+		t.Fatalf("first Save() error = %v", err)
+	}
+	if backup != "" {
+		t.Errorf("first-save backup = %q, want empty", backup)
+	}
+	if _, err := os.Stat(missing); err != nil {
+		t.Fatalf("first save did not create the file: %v", err)
 	}
 }
