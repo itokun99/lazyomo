@@ -462,6 +462,8 @@ func TestSetScalar(t *testing.T) {
 			value: strings.Repeat("x", 64), wantValue: strings.Repeat("x", 64),
 		},
 		{name: "active profile", path: "/model_profile", value: "cheap", wantValue: "cheap"},
+		{name: "active profile pin", path: "/model_profile", value: "anthropic/claude-opus-5", wantValue: "anthropic/claude-opus-5"},
+		{name: "active profile pin with suffix", path: "/model_profile", value: "adacode/gpt-5-3:max", wantValue: "adacode/gpt-5-3:max"},
 		{name: "agent model alias", path: "/agents/oracle/model", value: "k3", wantValue: "k3"},
 		{name: "agent model full reference", path: "/agents/oracle/model", value: "vendor/model-1", wantValue: "vendor/model-1"},
 		{name: "agent reasoning", path: "/agents/oracle/reasoning", value: "high", wantValue: "high"},
@@ -482,6 +484,8 @@ func TestSetScalar(t *testing.T) {
 			value: strings.Repeat("x", 65), wantErrPart: "invalid display_name",
 		},
 		{name: "unknown profile", path: "/model_profile", value: "ghost", wantErrPart: "unknown model profile"},
+		{name: "nonsense profile", path: "/model_profile", value: "nonsense", wantErrPart: "unknown model profile"},
+		{name: "malformed pin empty id", path: "/model_profile", value: "x/", wantErrPart: "unknown model profile"},
 		{name: "clearing active profile blocked", path: "/model_profile", value: "", wantErrPart: "blocked"},
 		{name: "agent model unknown", path: "/agents/oracle/model", value: "ghost", wantErrPart: "invalid model"},
 		{name: "agent model empty", path: "/agents/oracle/model", value: "", wantErrPart: "invalid model"},
@@ -690,6 +694,172 @@ func TestSetScalar_ModelProfile(t *testing.T) {
 		}
 		if got, found := rawValue(t, path, "/model_profile"); found {
 			t.Errorf("model_profile still present: %#v", got)
+		}
+	})
+
+	t.Run("accepts lane key daily-normal", func(t *testing.T) {
+		path := writeConfig(t, "{\n  \"model_profiles\": {\n    \"daily-normal\": {\n      \"display_name\": \"Daily Normal\",\n    },\n  },\n}\n")
+		ed, err := editor.Load(path)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if err := ed.SetScalar("/model_profile", "daily-normal"); err != nil {
+			t.Fatalf("SetScalar() error = %v", err)
+		}
+		if _, err := ed.Save(); err != nil {
+			t.Fatalf("Save() error = %v", err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading saved config: %v", err)
+		}
+		if !strings.Contains(string(data), `"model_profile": "daily-normal"`) {
+			t.Errorf("saved bytes lack the lane key:\n%s", data)
+		}
+		if got, found := rawValue(t, path, "/model_profile"); !found || !jsonEqual(got, "daily-normal") {
+			t.Errorf("model_profile = %#v (found %v), want daily-normal", got, found)
+		}
+	})
+
+	t.Run("accepts provider/model pin and renders read-only", func(t *testing.T) {
+		path := writeConfig(t, "{\n  \"model_profiles\": {\n    \"daily-normal\": {\n      \"display_name\": \"Daily Normal\",\n    },\n  },\n  \"model_profile\": \"daily-normal\",\n}\n")
+		ed, err := editor.Load(path)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if err := ed.SetScalar("/model_profile", "anthropic/claude-opus-5"); err != nil {
+			t.Fatalf("SetScalar(pin) error = %v", err)
+		}
+		if _, err := ed.Save(); err != nil {
+			t.Fatalf("Save() error = %v", err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading saved config: %v", err)
+		}
+		if !strings.Contains(string(data), `"model_profile": "anthropic/claude-opus-5"`) {
+			t.Errorf("saved bytes lack the pin:\n%s", data)
+		}
+		sections := ed.Sections()
+		profile, ok := sectionByID(sections, editor.SectionID("model_profile"))
+		if !ok {
+			t.Fatalf("Sections() has no model_profile section")
+		}
+		if !profile.ReadOnly {
+			t.Errorf("model_profile section = %+v, want read-only", profile)
+		}
+		if len(profile.Entries) != 1 || profile.Entries[0].Value != "anthropic/claude-opus-5" || !profile.Entries[0].ReadOnly {
+			t.Errorf("model_profile entries = %+v, want one read-only pin value", profile.Entries)
+		}
+		detail, err := ed.Detail(editor.SectionID("model_profile"), "model_profile")
+		if err != nil {
+			t.Fatalf("Detail() error = %v", err)
+		}
+		if len(detail.Lines) != 1 || detail.Lines[0].Value != "anthropic/claude-opus-5" || detail.Lines[0].Editable {
+			t.Errorf("model_profile detail = %+v, want read-only pin value", detail)
+		}
+		// A fresh load (stale-state guard) sees the persisted pin.
+		fresh, err := editor.Load(path)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		got, err := fresh.Detail(editor.SectionID("model_profile"), "model_profile")
+		if err != nil {
+			t.Fatalf("Detail() after reload error = %v", err)
+		}
+		if len(got.Lines) != 1 || got.Lines[0].Value != "anthropic/claude-opus-5" {
+			t.Errorf("model_profile detail after reload = %+v, want pin value", got)
+		}
+	})
+
+	t.Run("accepts pin without a profiles block", func(t *testing.T) {
+		path := writeConfig(t, "{\n  \"model_profile\": \"daily\",\n}\n")
+		ed, err := editor.Load(path)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if err := ed.SetScalar("/model_profile", "anthropic/claude-opus-5"); err != nil {
+			t.Fatalf("SetScalar(pin) error = %v", err)
+		}
+		if _, err := ed.Save(); err != nil {
+			t.Fatalf("Save() error = %v", err)
+		}
+		if got, found := rawValue(t, path, "/model_profile"); !found || !jsonEqual(got, "anthropic/claude-opus-5") {
+			t.Errorf("model_profile = %#v (found %v), want pin", got, found)
+		}
+	})
+
+	t.Run("rejects nonsense and leaves the file untouched", func(t *testing.T) {
+		path := writeConfig(t, "{\n  \"model_profiles\": {\n    \"daily-normal\": {\n      \"display_name\": \"Daily Normal\",\n    },\n  },\n  \"model_profile\": \"daily-normal\",\n}\n")
+		original, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading config: %v", err)
+		}
+		ed, err := editor.Load(path)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if err := ed.SetScalar("/model_profile", "nonsense"); err == nil {
+			t.Fatal("SetScalar(nonsense) error = nil, want error")
+		}
+		if got := ed.DirtyPaths(); len(got) != 0 {
+			t.Fatalf("DirtyPaths() = %v after rejected value, want empty", got)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading config: %v", err)
+		}
+		if !bytes.Equal(data, original) {
+			t.Errorf("file changed after rejected value:\n%s", data)
+		}
+	})
+
+	t.Run("malformed pins follow modelRefPattern", func(t *testing.T) {
+		// modelRefPattern requires a non-empty segment after every
+		// slash, so "x/" is rejected; it allows repeated /segments,
+		// so "a/b/c" is accepted as a pin.
+		cases := []struct {
+			value     string
+			wantError bool
+		}{
+			{value: "x/", wantError: true},
+			{value: "/model", wantError: true},
+			{value: "a/b/c", wantError: false},
+		}
+		for _, tc := range cases {
+			path := writeConfig(t, "{\n  \"model_profiles\": {\n    \"daily-normal\": {\n      \"display_name\": \"Daily Normal\",\n    },\n  },\n  \"model_profile\": \"daily-normal\",\n}\n")
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("reading config: %v", err)
+			}
+			ed, err := editor.Load(path)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			err = ed.SetScalar("/model_profile", tc.value)
+			if tc.wantError {
+				if err == nil {
+					t.Errorf("SetScalar(%q) error = nil, want error", tc.value)
+				}
+				data, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Fatalf("reading config: %v", readErr)
+				}
+				if !bytes.Equal(data, original) {
+					t.Errorf("file changed after rejected %q:\n%s", tc.value, data)
+				}
+				continue
+			}
+			if err != nil {
+				t.Errorf("SetScalar(%q) error = %v, want nil", tc.value, err)
+				continue
+			}
+			if _, err := ed.Save(); err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			if got, found := rawValue(t, path, "/model_profile"); !found || !jsonEqual(got, tc.value) {
+				t.Errorf("model_profile = %#v (found %v), want %q", got, found, tc.value)
+			}
 		}
 	})
 }
