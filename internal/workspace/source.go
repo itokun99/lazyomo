@@ -41,15 +41,17 @@ const (
 	IDMCP     = "mcp"
 )
 
-// Session is the minimal uniform handle the registry keeps for an editable
-// source's document: where it lives and what changed since the last save or
-// reload. *editor.Editor satisfies it today; the mcp.json source gets its
-// session (internal/mcpfile) in a later wave, so its Session stays nil until
-// then. Save is deliberately absent: per-file save orchestration lands in a
-// later todo and owns that signature.
+// Session is the uniform handle the registry keeps for an editable
+// source's document: where it lives, what changed since the last save or
+// reload, and how to save or reload it. *editor.Editor satisfies it today;
+// the mcp.json source gets its session (internal/mcpfile) attached in a
+// later wave. Save returns the timestamped backup it created, or "" when
+// the file did not exist before, and clears dirty only on success.
 type Session interface {
 	Path() string
 	DirtyPaths() []string
+	Save() (string, error)
+	Reload() error
 }
 
 var _ Session = (*editor.Editor)(nil)
