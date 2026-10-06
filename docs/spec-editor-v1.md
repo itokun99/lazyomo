@@ -1,6 +1,8 @@
 # lazyomo v1 Editor Scope Spec
 
-Source facts (2026-10-05): live config keys are `$schema`, `models`, `model_profiles`, `model_profile`, `agents`, `categories`, `telemetry`, `git_master`, `memory`, `task`, `teams`, `disabled_skills`, `profiles`, `[opencode]/[native]/[codex]`, `_migrations`. Live data holds 12 model aliases, 3 profiles, 6 agents, 10 categories, `telemetry.enabled=false`, 2 `git_master` booleans. Engine `internal/omodit` exposes `Load`, `Get(pointer)`, `Set(pointer,value)`, `Add`, `Remove`, `Save` (comment-preserving, atomic, timestamped backup). Credentials live in `~/.omo/agent/` and stay out of scope, always.
+> Superseded by [docs/spec-editor-v2.md](spec-editor-v2.md). v2 adds the `git_master` section, real read-only rendering for every other present top-level key, the `model_profile` pin rule, and the second editable document (`mcp.json`), and it corrects the live-key list below.
+
+Source facts (2026-10-05, corrected in v2): the v1 list below is stale. The verified live `~/.omo/omo.jsonc` (2026-10-06) has exactly 9 top-level keys: `$schema`, `models`, `model_profiles`, `model_profile`, `agents`, `categories`, `git_master`, `telemetry`, `_migrations`. The `memory`, `task`, `teams`, `disabled_skills`, `profiles`, and `[opencode]`/`[native]`/`[codex]` entries are not present. Engine `internal/omodit` exposes `Load`, `Get(pointer)`, `Set(pointer,value)`, `Add`, `Remove`, `Save` (comment-preserving, atomic, timestamped backup). Credentials live in `~/.omo/agent/` and stay out of scope, always.
 
 ## 1. V1 Editable Surface
 
