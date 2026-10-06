@@ -63,7 +63,7 @@ func newFakeEditor() *fakeEditor {
 			ID: editor.SectionGitMaster, Title: "Git",
 			Entries: []editor.Entry{
 				{Key: "commit_footer", Path: "/git_master/commit_footer", Kind: editor.KindBool, Value: "false"},
-			{Key: "include_co_authored_by", Path: "/git_master/include_co_authored_by", Kind: editor.KindBool, Value: "false"},
+				{Key: "include_co_authored_by", Path: "/git_master/include_co_authored_by", Kind: editor.KindBool, Value: "false"},
 			},
 		},
 		{
