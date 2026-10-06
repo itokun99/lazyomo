@@ -644,7 +644,7 @@ func formatMCPValue(value any) string {
 // state when no session is bound or no server matches the filter.
 func (m *Model) mcpEntryLines(inner int) []string {
 	if m.mcp == nil {
-		return []string{m.styles.Help.Render(padRight(fitWidth("  mcp.json unavailable (missing or invalid)", inner), inner))}
+		return []string{m.styles.Help.Render(padRight(fitWidth("  mcp.json unavailable (unreadable or invalid)", inner), inner))}
 	}
 	if len(m.mcpRows) == 0 {
 		text := "  (no servers) - press a to add the first one"
@@ -706,7 +706,7 @@ func (m *Model) mcpNameWidth() int {
 // source-path header, then the selectable rows (masked secrets included).
 func (m *Model) mcpDetailLines(inner int) []string {
 	if m.mcp == nil {
-		return []string{m.styles.Help.Render(padRight(fitWidth("  mcp.json unavailable (missing or invalid)", inner), inner))}
+		return []string{m.styles.Help.Render(padRight(fitWidth("  mcp.json unavailable (unreadable or invalid)", inner), inner))}
 	}
 	if len(m.mcpDetail) == 0 {
 		return []string{m.styles.Help.Render(padRight("  (no server selected)", inner))}

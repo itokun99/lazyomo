@@ -193,8 +193,11 @@ func TestRegistry(t *testing.T) {
 		f := newFixture(t)
 		reg := f.registry()
 
-		if sources := reg.Sources(); len(sources) != 0 {
-			t.Fatalf("Sources() = %#v, want none", sources)
+		// The mcp.json creation target registers even though no file exists;
+		// every layer still reports a diagnostic.
+		sources := reg.Sources()
+		if len(sources) != 1 || sources[0].ID != "mcp" {
+			t.Fatalf("Sources() = %#v, want only the mcp creation target", sources)
 		}
 		if diagnostics := reg.Diagnostics(); len(diagnostics) != 3 {
 			t.Fatalf("Diagnostics() = %#v, want one per layer", diagnostics)
@@ -352,15 +355,16 @@ func TestRegistry(t *testing.T) {
 		sourceByID(t, reg, "mcp")
 	})
 
-	t.Run("missing mcp.json yields a diagnostic", func(t *testing.T) {
+	t.Run("missing mcp.json still registers the creation target", func(t *testing.T) {
 		f := newFixture(t)
 		f.write(t, f.userPath(), validUserConfig)
 		f.write(t, f.projectPath(), validProjectConfig)
 		reg := f.registry()
 
-		if _, ok := reg.Source("mcp"); ok {
-			t.Error("mcp source registered without mcp.json")
-		}
+		// The global mcp.json has a fixed location: a missing file registers
+		// as the writable target whose first add creates it.
+		mcp := sourceByID(t, reg, "mcp")
+		checkSource(t, mcp, "mcp", f.mcpPath(), workspace.KindExternal, workspace.SchemaMCPServers, true)
 		requireDiagnostic(t, reg, "mcp")
 		sourceByID(t, reg, "user")
 		sourceByID(t, reg, "project")
@@ -372,15 +376,14 @@ func TestRegistryRebuild(t *testing.T) {
 	f.write(t, f.userPath(), validUserConfig)
 
 	first := f.registry()
-	if _, ok := first.Source("mcp"); ok {
-		t.Fatal("mcp source registered before mcp.json existed")
-	}
+	mcp := sourceByID(t, first, "mcp")
+	checkSource(t, mcp, "mcp", f.mcpPath(), workspace.KindExternal, workspace.SchemaMCPServers, true)
 	requireDiagnostic(t, first, "mcp")
 
 	// stale_state: a rebuild after the file appears must reflect it.
 	f.write(t, f.mcpPath(), validMCPConfig)
 	second := f.registry()
-	mcp := sourceByID(t, second, "mcp")
+	mcp = sourceByID(t, second, "mcp")
 	checkSource(t, mcp, "mcp", f.mcpPath(), workspace.KindExternal, workspace.SchemaMCPServers, true)
 	if diagnostics := diagnosticsFor(second, "mcp"); len(diagnostics) != 0 {
 		t.Errorf("Diagnostics() = %#v, want no mcp diagnostic after the file appeared", second.Diagnostics())

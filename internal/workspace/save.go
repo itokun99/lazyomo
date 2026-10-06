@@ -52,15 +52,26 @@ func snapshotOf(path string) fileSnapshot {
 	return fileSnapshot{mtime: info.ModTime().UnixNano(), size: info.Size(), exists: true}
 }
 
+// remember records the consistent-state snapshot of a source's file. A file
+// that does not exist has no state to guard, so its snapshot is cleared
+// instead: mcp.json before its first add can then be created by the first
+// save rather than being refused as stale. Once the file exists, every save
+// and reload refreshes a real snapshot.
 func (r *Registry) remember(id, path string) {
+	snapshot := snapshotOf(path)
+	if !snapshot.exists {
+		delete(r.snapshots, id)
+		return
+	}
 	if r.snapshots == nil {
 		r.snapshots = make(map[string]fileSnapshot)
 	}
-	r.snapshots[id] = snapshotOf(path)
+	r.snapshots[id] = snapshot
 }
 
 // AttachSession sets the editing session for a registered source and records
-// its stale-guard snapshot. It wires sessions the registry cannot build
+// its stale-guard snapshot (a missing file records nothing: its first save
+// creates it). It wires sessions the registry cannot build
 // itself: test doubles, and the mcpfile session from a later wave. The
 // session path must match the source path.
 func (r *Registry) AttachSession(id string, session Session) error {

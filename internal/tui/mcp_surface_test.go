@@ -312,8 +312,14 @@ func TestMCPAbsentFileEmptyStateAndFirstAdd(t *testing.T) {
 	}
 }
 
-func TestMCPUnavailableEmptyState(t *testing.T) {
-	m := newTestModel(newFakeWorkspace(newFakeEditor()))
+func TestMCPUnavailableWhenSessionMissing(t *testing.T) {
+	// A registered source whose session could not load (unreadable or
+	// invalid mcp.json): the surface stays visible with the diagnostic and
+	// refuses edits. A MISSING file is not this case; it registers as the
+	// writable creation target (see TestRealRegistryFirstAddCreatesFile).
+	ws := newFakeWorkspace(newFakeEditor())
+	ws.addSource(workspace.IDMCP, filepath.Join(t.TempDir(), "agent", "mcp.json"), workspace.KindExternal, workspace.SchemaMCPServers, nil)
+	m := newTestModel(ws)
 	m = selectSideRow(t, m, "Servers")
 	if view := m.View(); !strings.Contains(view, "mcp.json unavailable") {
 		t.Errorf("view missing the diagnostic:\n%s", view)
@@ -326,6 +332,91 @@ func TestMCPUnavailableEmptyState(t *testing.T) {
 		if m.overlay != OverlayNone {
 			t.Errorf("key %q opened overlay %v", key, m.overlay)
 		}
+	}
+}
+
+// realRegistryNoMCPFixture mirrors main.go over a synthetic home WITHOUT
+// mcp.json: build the registry, then attach the mcpfile session for the
+// registered source when one exists.
+func realRegistryNoMCPFixture(t *testing.T) (*workspace.Registry, string) {
+	t.Helper()
+	home := t.TempDir()
+	agentDir := filepath.Join(home, ".omo", "agent")
+	userPath := filepath.Join(home, ".omo", "omo.jsonc")
+	mcpPath := filepath.Join(agentDir, "mcp.json")
+	cwd := filepath.Join(home, "work")
+	writeFixture(t, userPath, `{"models":{"k3":{"model":"acme/code-large"}}}`)
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", cwd, err)
+	}
+	reg := workspace.NewRegistry(workspace.RegistryConfig{HomeDir: home, Cwd: cwd, AgentDir: agentDir})
+	if source, ok := reg.Source(workspace.IDMCP); ok {
+		session, err := mcpfile.Load(source.Path)
+		if err != nil {
+			t.Fatalf("mcpfile.Load(%s) error = %v", source.Path, err)
+		}
+		if err := reg.AttachSession(workspace.IDMCP, session); err != nil {
+			t.Fatalf("AttachSession() error = %v", err)
+		}
+	}
+	return reg, mcpPath
+}
+
+func TestRealRegistryFirstAddCreatesFile(t *testing.T) {
+	reg, mcpPath := realRegistryNoMCPFixture(t)
+	if _, ok := reg.Source(workspace.IDMCP); !ok {
+		t.Fatalf("mcp source missing without a file; diagnostics = %v", reg.Diagnostics())
+	}
+	m := newTestModel(reg)
+	m = selectSideRow(t, m, "Servers")
+	if view := m.View(); !strings.Contains(view, "no servers") {
+		t.Errorf("empty state missing:\n%s", view)
+	}
+	if _, err := os.Stat(mcpPath); !os.IsNotExist(err) {
+		t.Fatalf("mcp.json must not exist before the first add: %v", err)
+	}
+	m = sendKeys(t, m, "a", "f", "i", "r", "s", "t", "enter", "enter", "enter")
+	if m.overlay != OverlayNone {
+		t.Fatalf("overlay = %v, want closed after create", m.overlay)
+	}
+	if !strings.Contains(m.status, "added first") {
+		t.Errorf("status = %q", m.status)
+	}
+	m = sendKeys(t, m, "s")
+	if m.overlay != OverlayConfirm {
+		t.Fatalf("overlay = %v, want save confirm", m.overlay)
+	}
+	if strings.Contains(m.confirmText, "stale") {
+		t.Errorf("a freshly created file must not be blocked as stale:\n%s", m.confirmText)
+	}
+	m = sendKeys(t, m, "enter")
+	if m.overlay != OverlayNone {
+		t.Fatalf("overlay = %v errorText = %q, want a clean save", m.overlay, m.errorText)
+	}
+	if !strings.Contains(m.status, "saved") {
+		t.Errorf("status = %q", m.status)
+	}
+	raw, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatalf("first add + save must create mcp.json: %v", err)
+	}
+	var doc struct {
+		MCPServers map[string]struct {
+			Type string `json:"type"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("created mcp.json is not strict JSON: %v\n%s", err, raw)
+	}
+	if got := doc.MCPServers["first"].Type; got != "stdio" {
+		t.Errorf("created server type = %q, want stdio\n%s", got, raw)
+	}
+	backups, err := filepath.Glob(mcpPath + ".bak.*")
+	if err != nil {
+		t.Fatalf("globbing backups: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Errorf("first add must not create a backup: %v", backups)
 	}
 }
 
