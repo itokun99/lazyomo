@@ -1,0 +1,37 @@
+{
+  "settings": {
+    "toolPrefix": "mcp",
+    "searchThreshold": 0.5
+  },
+  "mcpServers": {
+    "alpha": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@example/alpha"],
+      "env": {
+        "ALPHA_TOKEN": "${ALPHA_TOKEN:-fallback}",
+        "ALPHA_MODE": "safe"
+      },
+      "enabled": true
+    },
+    "beta": {
+      "type": "http",
+      "url": "https://beta.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BETA_TOKEN}"
+      },
+      "auth": "oauth",
+      "enabled": true
+    },
+    "gamma": {
+      "command": "uvx",
+      "args": ["gamma-server"],
+      "enabled": false,
+      "customNote": "unknown field preserved"
+    },
+    "delta": {
+      "url": "https://delta.example.com/mcp",
+      "lifecycle": "lazy"
+    }
+  }
+}
