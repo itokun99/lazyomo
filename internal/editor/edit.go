@@ -18,7 +18,7 @@ import (
 //	/model_profiles/<name>/display_name   non-empty, at most 64 characters
 //	/model_profiles/<name>/models         whole chain
 //	/model_profiles/<name>/models/<i>     one chain element
-//	/model_profile                        existing model_profiles key, or "" to clear
+//	/model_profile                        existing model_profiles key or <provider>/<model-id> pin, or "" to clear
 //	/agents/<name>/model                  existing alias or <provider>/<model-id>
 //	/agents/<name>/models[/<i>]           chain or element
 //	/agents/<name>/reasoning              low|medium|high|max, or "" to unset
@@ -125,13 +125,22 @@ func (e *Editor) setModelProfile(value string) error {
 		}
 		return nil
 	}
-	profiles, ok := e.getObject("/model_profiles")
-	if !ok {
-		return fmt.Errorf("unknown model profile %q", value)
+	if profiles, ok := e.getObject("/model_profiles"); ok {
+		if _, ok := profiles[value]; ok {
+			return e.writeModelProfile(value)
+		}
 	}
-	if _, ok := profiles[value]; !ok {
-		return fmt.Errorf("unknown model profile %q", value)
+	// Literal provider/model pins never name a profile key: accept any
+	// value matching modelRefPattern (which always contains a slash).
+	if validModelRef(value) {
+		return e.writeModelProfile(value)
 	}
+	return fmt.Errorf("unknown model profile %q", value)
+}
+
+// writeModelProfile stores value at /model_profile, adding the key when
+// it is absent.
+func (e *Editor) writeModelProfile(value string) error {
 	if _, found := e.doc.Get("/model_profile"); found {
 		if err := e.doc.Set("/model_profile", value); err != nil {
 			return fmt.Errorf("setting model_profile: %w", err)
