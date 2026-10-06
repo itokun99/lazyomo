@@ -333,6 +333,7 @@ func TestSetFieldAccepted(t *testing.T) {
 		{name: "auth false", server: "beta", field: "auth", value: false, want: false},
 		{name: "object field", server: "beta", field: "oauth", value: map[string]any{"clientId": "abc"}, want: map[string]any{"clientId": "abc"}},
 		{name: "interpolation url", server: "beta", field: "url", value: "https://x.example.com/${PATH:-mcp}", want: "https://x.example.com/${PATH:-mcp}", rawContains: "${PATH:-mcp}"},
+		{name: "leading spaces without bang", server: "alpha", field: "command", value: " npx foo", want: " npx foo"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -372,6 +373,9 @@ func TestSetFieldRejected(t *testing.T) {
 		{name: "auth type", server: "beta", field: "auth", value: true, wantMsg: "expected string or false"},
 		{name: "type enum", server: "alpha", field: "type", value: "sse", wantMsg: `want "stdio" or "http"`},
 		{name: "bang prefix", server: "alpha", field: "command", value: "!rm -rf /", wantMsg: `starting with "!"`},
+		{name: "bang after leading spaces", server: "alpha", field: "command", value: "  !cmd", wantMsg: `starting with "!"`},
+		{name: "bang after leading tab", server: "alpha", field: "command", value: "\t!cmd", wantMsg: `starting with "!"`},
+		{name: "dollar paren after leading spaces", server: "alpha", field: "command", value: "  echo $(id)", wantMsg: `containing "$("`},
 		{name: "dollar paren", server: "alpha", field: "command", value: "echo $(id)", wantMsg: `containing "$("`},
 		{name: "bang in array", server: "alpha", field: "args", value: []string{"safe", "!boom"}, wantMsg: `starting with "!"`},
 		{name: "dollar paren in map", server: "alpha", field: "env", value: map[string]string{"X": "a$(b)"}, wantMsg: `containing "$("`},
