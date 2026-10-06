@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // FieldKind describes the JSON shape accepted for one server field.
@@ -100,9 +101,13 @@ func endpointViolation(name string, server map[string]any) error {
 
 // checkInterpolation rejects the two string forms the runtime refuses to
 // interpret: a leading "!" (shell execution) and "$(" (command
-// substitution). ${VAR} and ${VAR:-default} stay untouched.
+// substitution). ${VAR} and ${VAR:-default} stay untouched. The "!"
+// check trims leading whitespace first, mirroring senpi's
+// value.trimStart().startsWith("!"); the "$(" check is a plain
+// substring match in senpi (value.includes("$(")), so it stays
+// trim-insensitive here too.
 func checkInterpolation(value string) error {
-	if strings.HasPrefix(value, "!") || strings.Contains(value, "$(") {
+	if strings.HasPrefix(strings.TrimLeftFunc(value, unicode.IsSpace), "!") || strings.Contains(value, "$(") {
 		return fmt.Errorf(`values starting with "!" or containing "$(" are rejected`)
 	}
 	return nil
