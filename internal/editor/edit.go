@@ -329,7 +329,7 @@ func (e *Editor) AddEntry(section SectionID, key string) error {
 	if !ok {
 		return fmt.Errorf("unknown section %q", section)
 	}
-	if section == SectionTelemetry {
+	if section == SectionTelemetry || section == SectionGitMaster {
 		return fmt.Errorf("section %s does not support adding entries", section)
 	}
 	if err := validateKey(key); err != nil {
@@ -372,6 +372,14 @@ func (e *Editor) RemoveEntry(section SectionID, key string) error {
 			return fmt.Errorf("removing the telemetry enabled toggle is not supported")
 		}
 		return fmt.Errorf("no telemetry entry %q", key)
+	}
+	if section == SectionGitMaster {
+		for _, name := range gitMasterKeys {
+			if key == name {
+				return fmt.Errorf("removing the git_master %s toggle is not supported", key)
+			}
+		}
+		return fmt.Errorf("no git_master entry %q", key)
 	}
 	entryPath := root + "/" + escapeToken(key)
 	if _, found := e.doc.Get(entryPath); !found {

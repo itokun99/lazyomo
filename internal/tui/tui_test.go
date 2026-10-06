@@ -54,9 +54,22 @@ func newFakeEditor() *fakeEditor {
 		{ID: editor.SectionAgents, Title: "Agents"},
 		{ID: editor.SectionCategories, Title: "Categories"},
 		{
-			ID: editor.SectionTelemetry, Title: "Telemetry", ReadOnly: true,
+			ID: editor.SectionTelemetry, Title: "Telemetry",
 			Entries: []editor.Entry{
-				{Key: "enabled", Path: "/telemetry/enabled", Kind: editor.KindBool, Value: "false", ReadOnly: true},
+				{Key: "enabled", Path: "/telemetry/enabled", Kind: editor.KindBool, Value: "false"},
+			},
+		},
+		{
+			ID: editor.SectionGitMaster, Title: "Git",
+			Entries: []editor.Entry{
+				{Key: "commit_footer", Path: "/git_master/commit_footer", Kind: editor.KindBool, Value: "false"},
+			{Key: "include_co_authored_by", Path: "/git_master/include_co_authored_by", Kind: editor.KindBool, Value: "false"},
+			},
+		},
+		{
+			ID: editor.SectionID("$schema"), Title: "$schema", ReadOnly: true,
+			Entries: []editor.Entry{
+				{Key: "$schema", Path: "/$schema", Kind: editor.KindScalar, Value: "https://example.invalid/omo.schema.json", ReadOnly: true},
 			},
 		},
 	}
@@ -74,8 +87,14 @@ func newFakeEditor() *fakeEditor {
 		{Label: "al.model", Path: "/models/al/model", Value: "m1", Editable: true},
 		{Label: "al.reasoning", Path: "/models/al/reasoning", Value: "high", Editable: true},
 	}}
-	f.details["telemetry\x00enabled"] = editor.Detail{Title: "telemetry/enabled", Lines: []editor.DetailLine{
-		{Label: "enabled", Path: "/telemetry/enabled", Value: "false", Bool: true, Editable: false},
+	f.details["telemetry\x00enabled"] = editor.Detail{Title: "enabled", Lines: []editor.DetailLine{
+		{Label: "enabled", Path: "/telemetry/enabled", Value: "false", Bool: true, Editable: true},
+	}}
+	f.details["git_master\x00commit_footer"] = editor.Detail{Title: "commit_footer", Lines: []editor.DetailLine{
+		{Label: "commit_footer", Path: "/git_master/commit_footer", Value: "false", Bool: true, Editable: true},
+	}}
+	f.details["$schema\x00$schema"] = editor.Detail{Title: "$schema", Lines: []editor.DetailLine{
+		{Label: "$schema", Path: "/$schema", Value: "https://example.invalid/omo.schema.json"},
 	}}
 	return f
 }
@@ -283,6 +302,18 @@ func TestFocusTransitions(t *testing.T) {
 }
 
 func TestNumberJumpSelectsSection(t *testing.T) {
+	// The harness mirrors the real surface: five jumpable sections plus
+	// Git plus one read-only section, reached via [/] and j/k.
+	m := newTestModel(newFakeEditor())
+	if len(m.sections) != 7 {
+		t.Fatalf("sections = %d, want 7 (5 + Git + read-only)", len(m.sections))
+	}
+	if m.sections[5].ID != editor.SectionGitMaster || m.sections[5].ReadOnly {
+		t.Errorf("sections[5] = %+v, want editable Git", m.sections[5])
+	}
+	if !m.sections[6].ReadOnly {
+		t.Errorf("sections[6] = %+v, want read-only", m.sections[6])
+	}
 	tests := []struct {
 		key string
 		idx int
@@ -312,8 +343,8 @@ func TestBracketCyclesSections(t *testing.T) {
 		t.Errorf("secIdx = %d, want 0", m.secIdx)
 	}
 	m = sendKeys(t, m, "[")
-	if m.secIdx != 4 {
-		t.Errorf("wrapped secIdx = %d, want 4", m.secIdx)
+	if m.secIdx != 6 {
+		t.Errorf("wrapped secIdx = %d, want 6", m.secIdx)
 	}
 	m = sendKeys(t, m, "]")
 	if m.secIdx != 0 {
@@ -643,9 +674,11 @@ func TestQuitDirtyConfirms(t *testing.T) {
 func TestReadOnlySectionBlocked(t *testing.T) {
 	f := newFakeEditor()
 	m := newTestModel(f)
-	m = sendKeys(t, m, "5")
-	if m.focus != PaneEntries || m.secIdx != 4 {
-		t.Fatalf("telemetry not selected: %v %d", m.focus, m.secIdx)
+	// "[" from the first section wraps to the last one: the $schema
+	// read-only section. Telemetry and Git stay editable toggles.
+	m = sendKeys(t, m, "[", "enter")
+	if m.focus != PaneEntries || m.secIdx != 6 {
+		t.Fatalf("read-only section not selected: %v %d", m.focus, m.secIdx)
 	}
 	for _, k := range []string{"e", "a", "d", " "} {
 		m = sendKeys(t, m, k)
@@ -725,9 +758,14 @@ func TestFilterEscapeExitsMode(t *testing.T) {
 		t.Fatalf("esc must clear filter, got %q", m.filter)
 	}
 	// The next section-jump key must act as a jump, not filter text.
+	// Telemetry is still the fifth section; Git follows it.
 	m = sendKeys(t, m, "5")
 	if m.secIdx != 4 {
 		t.Fatalf("secIdx = %d, want 4 (Telemetry jump)", m.secIdx)
+	}
+	m = sendKeys(t, m, "]")
+	if m.secIdx != 5 || m.sections[5].ID != editor.SectionGitMaster {
+		t.Fatalf("secIdx = %d (%q), want 5 (Git)", m.secIdx, m.sections[m.secIdx].ID)
 	}
 	if m.filterMode || m.filter != "" {
 		t.Fatalf("jump key leaked into filter: mode=%v filter=%q", m.filterMode, m.filter)

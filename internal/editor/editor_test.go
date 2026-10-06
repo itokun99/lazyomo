@@ -112,8 +112,8 @@ func TestLoad_Sections(t *testing.T) {
 	ed, _, _ := loadEditor(t)
 	sections := ed.Sections()
 
-	if len(sections) != 5 {
-		t.Fatalf("Sections() returned %d sections, want 5", len(sections))
+	if len(sections) != 8 {
+		t.Fatalf("Sections() returned %d sections, want 8", len(sections))
 	}
 	wantIDs := []editor.SectionID{
 		editor.SectionModels,
@@ -121,8 +121,12 @@ func TestLoad_Sections(t *testing.T) {
 		editor.SectionAgents,
 		editor.SectionCategories,
 		editor.SectionTelemetry,
+		editor.SectionGitMaster,
+		editor.SectionID("$schema"),
+		editor.SectionID("model_profile"),
 	}
-	wantTitles := []string{"Models", "Model Profiles", "Agents", "Categories", "Telemetry"}
+	wantTitles := []string{"Models", "Model Profiles", "Agents", "Categories", "Telemetry", "Git", "$schema", "model_profile"}
+	wantReadOnly := []bool{false, false, false, false, false, false, true, true}
 	for i, section := range sections {
 		if section.ID != wantIDs[i] {
 			t.Errorf("Sections()[%d].ID = %q, want %q", i, section.ID, wantIDs[i])
@@ -130,8 +134,8 @@ func TestLoad_Sections(t *testing.T) {
 		if section.Title != wantTitles[i] {
 			t.Errorf("Sections()[%d].Title = %q, want %q", i, section.Title, wantTitles[i])
 		}
-		if section.ReadOnly {
-			t.Errorf("Sections()[%d] (%s) unexpectedly read-only", i, section.ID)
+		if section.ReadOnly != wantReadOnly[i] {
+			t.Errorf("Sections()[%d] (%s) ReadOnly = %v, want %v", i, section.ID, section.ReadOnly, wantReadOnly[i])
 		}
 	}
 
@@ -172,6 +176,50 @@ func TestLoad_Sections(t *testing.T) {
 	}
 	if enabled.Value != "false" {
 		t.Errorf("telemetry enabled value = %q, want false", enabled.Value)
+	}
+	if enabled.ReadOnly {
+		t.Errorf("telemetry entry = %+v, want editable", enabled)
+	}
+	git, _ := sectionByID(sections, editor.SectionGitMaster)
+	if len(git.Entries) != 2 {
+		t.Fatalf("git entries = %d, want 2", len(git.Entries))
+	}
+	for i, key := range []string{"commit_footer", "include_co_authored_by"} {
+		entry := git.Entries[i]
+		if entry.Key != key || entry.Path != "/git_master/"+key || entry.Kind != editor.KindBool {
+			t.Errorf("git entry %d = %+v, want %s KindBool at /git_master/%s", i, entry, key, key)
+		}
+		if entry.Value != "false" {
+			t.Errorf("git %s value = %q, want false", key, entry.Value)
+		}
+		if entry.ReadOnly {
+			t.Errorf("git entry %d = %+v, want editable", i, entry)
+		}
+	}
+	schema, _ := sectionByID(sections, editor.SectionID("$schema"))
+	if len(schema.Entries) != 1 {
+		t.Fatalf("schema entries = %d, want 1", len(schema.Entries))
+	}
+	schemaEntry := schema.Entries[0]
+	if schemaEntry.Key != "$schema" || schemaEntry.Path != "/$schema" {
+		t.Errorf("schema entry = %+v, want key $schema at /$schema", schemaEntry)
+	}
+	if schemaEntry.Value != "https://example.invalid/omo.schema.json" {
+		t.Errorf("schema entry value = %q, want the schema URL", schemaEntry.Value)
+	}
+	if !schemaEntry.ReadOnly {
+		t.Errorf("schema entry = %+v, want read-only", schemaEntry)
+	}
+	profile, _ := sectionByID(sections, editor.SectionID("model_profile"))
+	if len(profile.Entries) != 1 {
+		t.Fatalf("model_profile entries = %d, want 1", len(profile.Entries))
+	}
+	profileEntry := profile.Entries[0]
+	if profileEntry.Key != "model_profile" || profileEntry.Value != "daily" {
+		t.Errorf("model_profile entry = %+v, want key model_profile with value daily", profileEntry)
+	}
+	if !profileEntry.ReadOnly {
+		t.Errorf("model_profile entry = %+v, want read-only", profileEntry)
 	}
 }
 
@@ -229,9 +277,9 @@ func TestLoad_MissingBlocks(t *testing.T) {
 				t.Fatalf("Load() error = %v", err)
 			}
 			sections := ed.Sections()
-			if len(sections) != 5 {
-				t.Fatalf("Sections() returned %d sections, want 5", len(sections))
-			}
+			if len(sections) != 6 {
+				t.Fatalf("Sections() returned %d sections, want 6", len(sections))
+		}
 			for _, id := range tt.wantEmpty {
 				section := mustSection(t, sections, id)
 				if len(section.Entries) != 0 {
@@ -241,6 +289,10 @@ func TestLoad_MissingBlocks(t *testing.T) {
 			telemetry := mustSection(t, sections, editor.SectionTelemetry)
 			if len(telemetry.Entries) != 1 || telemetry.Entries[0].Value != "false" {
 				t.Errorf("telemetry entries = %+v, want a single false switch", telemetry.Entries)
+			}
+			git := mustSection(t, sections, editor.SectionGitMaster)
+			if len(git.Entries) != 2 || git.Entries[0].Value != "false" || git.Entries[1].Value != "false" {
+				t.Errorf("git entries = %+v, want two false switches", git.Entries)
 			}
 		})
 	}
@@ -1490,5 +1542,146 @@ func TestEndToEnd_EditSaveReloadPreservesComments(t *testing.T) {
 	wantChain := `["spaceBunny:max","chainOnly:high","github-copilot/claude-sonnet-5:max"]`
 	if dailyDetail.Lines[1].Value != wantChain {
 		t.Errorf("reloaded daily chain = %q, want %q", dailyDetail.Lines[1].Value, wantChain)
+	}
+}
+
+func TestDetail_GitMaster(t *testing.T) {
+	ed, _, _ := loadEditor(t)
+	for _, key := range []string{"commit_footer", "include_co_authored_by"} {
+		got, err := ed.Detail(editor.SectionGitMaster, key)
+		if err != nil {
+			t.Fatalf("Detail(git_master, %q) error = %v", key, err)
+		}
+		if got.Title != key {
+			t.Errorf("Detail title = %q, want %q", got.Title, key)
+		}
+		if len(got.Lines) != 1 {
+			t.Fatalf("Detail lines = %d, want 1", len(got.Lines))
+		}
+		line := got.Lines[0]
+		if line.Label != key || line.Path != "/git_master/"+key {
+			t.Errorf("Detail line = %+v, want label/path for %q", line, key)
+		}
+		if line.Value != "false" || !line.Bool || !line.Editable {
+			t.Errorf("Detail line = %+v, want false editable bool", line)
+		}
+	}
+	if _, err := ed.Detail(editor.SectionGitMaster, "signing"); err == nil {
+		t.Error("Detail(git_master, signing) error = nil, want error")
+	}
+}
+
+func TestDetail_ReadOnly(t *testing.T) {
+	t.Run("scalar keys stay single read-only lines", func(t *testing.T) {
+		ed, _, _ := loadEditor(t)
+		got, err := ed.Detail(editor.SectionID("$schema"), "$schema")
+		if err != nil {
+			t.Fatalf("Detail() error = %v", err)
+		}
+		if got.Title != "$schema" || len(got.Lines) != 1 {
+			t.Fatalf("Detail() = %+v, want one line titled $schema", got)
+		}
+		line := got.Lines[0]
+		if line.Value != "https://example.invalid/omo.schema.json" || line.Editable || line.Bool {
+			t.Errorf("Detail line = %+v, want read-only non-bool URL", line)
+		}
+		profile, err := ed.Detail(editor.SectionID("model_profile"), "model_profile")
+		if err != nil {
+			t.Fatalf("Detail() error = %v", err)
+		}
+		if len(profile.Lines) != 1 || profile.Lines[0].Value != "daily" || profile.Lines[0].Editable {
+			t.Errorf("model_profile detail = %+v, want read-only value daily", profile)
+		}
+	})
+	t.Run("unusual JSON types survive previews", func(t *testing.T) {
+		path := writeConfig(t, "{\n  \"arr\": [1, \"two\", null],\n  \"nothing\": null,\n  \"count\": 42,\n  \"flag\": true,\n  \"obj\": {\n    \"b\": 2,\n    \"a\": \"x\",\n  },\n}\n")
+		ed, err := editor.Load(path)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		sections := ed.Sections()
+		// 6 editable + 5 read-only keys.
+		if len(sections) != 11 {
+			t.Fatalf("Sections() returned %d sections, want 11", len(sections))
+		}
+		for _, section := range sections[6:] {
+			if !section.ReadOnly {
+				t.Errorf("section %s unexpectedly editable", section.ID)
+			}
+			if len(section.Entries) != 1 || !section.Entries[0].ReadOnly {
+				t.Errorf("section %s entries = %+v, want one read-only preview", section.ID, section.Entries)
+			}
+		}
+		arr, _ := sectionByID(sections, editor.SectionID("arr"))
+		if arr.Entries[0].Value != `[1,"two",null]` {
+			t.Errorf("arr preview = %q, want compact JSON", arr.Entries[0].Value)
+		}
+		nothing, _ := sectionByID(sections, editor.SectionID("nothing"))
+		if nothing.Entries[0].Value != "" {
+			t.Errorf("null preview = %q, want empty", nothing.Entries[0].Value)
+		}
+		obj, err := ed.Detail(editor.SectionID("obj"), "obj")
+		if err != nil {
+			t.Fatalf("Detail() error = %v", err)
+		}
+		if len(obj.Lines) != 2 || obj.Lines[0].Label != "a" || obj.Lines[1].Label != "b" {
+			t.Errorf("obj detail = %+v, want sorted a/b lines", obj)
+		}
+		for _, line := range obj.Lines {
+			if line.Editable {
+				t.Errorf("obj detail line = %+v, want read-only", line)
+			}
+		}
+		flag, err := ed.Detail(editor.SectionID("flag"), "flag")
+		if err != nil {
+			t.Fatalf("Detail() error = %v", err)
+		}
+		if len(flag.Lines) != 1 || flag.Lines[0].Value != "true" || !flag.Lines[0].Bool || flag.Lines[0].Editable {
+			t.Errorf("flag detail = %+v, want read-only true bool", flag)
+		}
+	})
+}
+
+func TestAddRemoveEntry_GitMaster(t *testing.T) {
+	ed, _, _ := loadEditor(t)
+	if err := ed.AddEntry(editor.SectionGitMaster, "signing"); err == nil {
+		t.Error("AddEntry(git_master) error = nil, want error")
+	}
+	for _, key := range []string{"commit_footer", "include_co_authored_by", "ghost"} {
+		if err := ed.RemoveEntry(editor.SectionGitMaster, key); err == nil {
+			t.Errorf("RemoveEntry(git_master, %q) error = nil, want error", key)
+		}
+	}
+}
+
+func TestReload_RefreshesSections(t *testing.T) {
+	path := writeConfig(t, "{\n  \"telemetry\": {\n    \"enabled\": false,\n  },\n}\n")
+	ed, err := editor.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if _, found := sectionByID(ed.Sections(), editor.SectionID("$schema")); found {
+		t.Fatal("schema section present before the external change")
+	}
+	if err := os.WriteFile(path, []byte("{\n  \"$schema\": \"https://example.invalid/v2\",\n  \"git_master\": {\n    \"commit_footer\": true,\n  },\n}\n"), 0o644); err != nil {
+		t.Fatalf("writing external change: %v", err)
+	}
+	if err := ed.Reload(); err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	sections := ed.Sections()
+	schema, found := sectionByID(sections, editor.SectionID("$schema"))
+	if !found {
+		t.Fatal("schema section missing after Reload")
+	}
+	if len(schema.Entries) != 1 || schema.Entries[0].Value != "https://example.invalid/v2" {
+		t.Errorf("schema entries = %+v, want the new URL", schema.Entries)
+	}
+	git := mustSection(t, sections, editor.SectionGitMaster)
+	if git.Entries[0].Value != "true" || git.Entries[1].Value != "false" {
+		t.Errorf("git entries = %+v, want commit_footer true and co-authored false", git.Entries)
+	}
+	if len(ed.DirtyPaths()) != 0 {
+		t.Errorf("DirtyPaths() = %v, want clean after reload", ed.DirtyPaths())
 	}
 }
