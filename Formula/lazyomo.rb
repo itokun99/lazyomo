@@ -1,30 +1,30 @@
 class Lazyomo < Formula
   desc "lazyomo — Go TUI editor for oh-my-openagent configs"
   homepage "https://github.com/itokun99/lazyomo"
-  version "3.0.0"
+  version "3.1.0"
   license "MIT"
 
   on_macos do
     on_intel do
       url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/lazyomo-darwin-amd64"
-      sha256 "ea3b563d6a9f634cbf91dc81f132cad4d5db929bb1eb5af2805f06652fb335d9"
+      sha256 "f3171644e253d92ce405c80d15d7a9525c8fecd53d549a4e788cb7b0b1c23443"
     end
 
     on_arm do
       url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/lazyomo-darwin-arm64"
-      sha256 "8dd92329a594539e93beb300e2646741d066ad7b4a39eeeb92c0a9a477fa9c2f"
+      sha256 "e831d8c2e9aa7a3fe40dc148b55b5b76a7720149af9a5af498b5c83cc6c1225a"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/lazyomo-linux-amd64"
-      sha256 "1633fbdd97d7f12ac74f88b0731e2d7e31dec96b43f49f4b9857c917d0c58f3a"
+      sha256 "9e5eb4c4a4532e87316000ef3579571ace58a443ef59e8f61d70ab4936453a66"
     end
 
     on_arm do
       url "https://github.com/itokun99/lazyomo/releases/download/v#{version}/lazyomo-linux-arm64"
-      sha256 "f9a7a60afe73b84267cc3b33cc1d2d25baf1fb7fd98a79e1e217cf074c59fd85"
+      sha256 "8f19fb015fa80ad95ee6071d9f26a9cec726d2b7cb465c456a4ad9986481cf40"
     end
   end
 
