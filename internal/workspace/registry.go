@@ -32,6 +32,7 @@ type RegistryConfig struct {
 type Registry struct {
 	sources     []Source
 	diagnostics []Diagnostic
+	snapshots   map[string]fileSnapshot
 }
 
 // NewRegistry resolves the default source set: the user omo.jsonc, the
@@ -87,6 +88,7 @@ func (r *Registry) loadUser(cfg RegistryConfig) {
 		Writable: true,
 		Session:  ed,
 	})
+	r.remember(IDUser, path)
 }
 
 // loadProject registers the nearest project-layer config as a read-only
@@ -188,6 +190,7 @@ func (r *Registry) loadMCP(cfg RegistryConfig) {
 		Schema:   SchemaMCPServers,
 		Writable: true,
 	})
+	r.remember(IDMCP, path)
 }
 
 // exists reports whether path exists, without following symlinks.
