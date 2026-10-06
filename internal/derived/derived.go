@@ -140,27 +140,20 @@ func parseProviders(data []byte) ([]Provider, error) {
 	sort.Strings(keys)
 	providers := make([]Provider, 0, len(keys))
 	for _, key := range keys {
-		var entry struct {
-			Name    string `json:"name"`
-			API     string `json:"api"`
-			BaseURL string `json:"baseUrl"`
-			Models  []struct {
-				ID string `json:"id"`
-			} `json:"models"`
-		}
-		if err := json.Unmarshal(entries[key], &entry); err != nil {
-			continue
-		}
-		name := strings.TrimSpace(entry.Name)
+		// Defensive per-entry decode: one oddly typed field must not drop
+		// the whole provider, so every field renders best-effort.
+		entry := map[string]any{}
+		_ = json.Unmarshal(entries[key], &entry)
+		name := stringField(entry, "name")
 		if name == "" {
 			name = key
 		}
 		providers = append(providers, Provider{
 			Key:        key,
 			Name:       name,
-			API:        strings.TrimSpace(entry.API),
-			BaseURL:    strings.TrimSpace(entry.BaseURL),
-			ModelCount: len(entry.Models),
+			API:        stringField(entry, "api"),
+			BaseURL:    stringField(entry, "baseUrl"),
+			ModelCount: len(modelItems(entry["models"])),
 		})
 	}
 	return providers, nil
@@ -192,36 +185,30 @@ func parseCatalog(data []byte) ([]CatalogProvider, error) {
 	sort.Strings(keys)
 	providers := make([]CatalogProvider, 0, len(keys))
 	for _, key := range keys {
-		var entry struct {
-			Models       []map[string]any `json:"models"`
-			CheckedAt    string           `json:"checkedAt"`
-			LastModified string           `json:"lastModified"`
-			ETag         string           `json:"etag"`
-		}
-		if err := json.Unmarshal(entries[key], &entry); err != nil {
-			continue
-		}
-		checked := strings.TrimSpace(entry.CheckedAt)
+		// Defensive per-entry decode: the live cache stores epoch numbers
+		// for checkedAt/lastModified and arbitrary model shapes, so every
+		// field renders best-effort and no single field drops the entry.
+		entry := map[string]any{}
+		_ = json.Unmarshal(entries[key], &entry)
+		checked := timestampField(entry, "checkedAt")
 		if checked == "" {
-			checked = strings.TrimSpace(entry.LastModified)
+			checked = timestampField(entry, "lastModified")
 		}
-		models := make([]CatalogModel, 0, len(entry.Models))
-		for _, raw := range entry.Models {
-			id, _ := raw["id"].(string)
-			id = strings.TrimSpace(id)
+		models := make([]CatalogModel, 0)
+		for _, item := range modelItems(entry["models"]) {
+			id := stringField(item, "id")
 			if id == "" {
 				continue
 			}
-			name, _ := raw["name"].(string)
-			name = strings.TrimSpace(name)
+			name := stringField(item, "name")
 			if name == "" {
 				name = id
 			}
 			models = append(models, CatalogModel{
 				ID:            id,
 				Name:          name,
-				Cost:          formatCost(raw["cost"]),
-				ContextWindow: parseContextWindow(raw["contextWindow"]),
+				Cost:          formatCost(item["cost"]),
+				ContextWindow: parseContextWindow(item["contextWindow"]),
 			})
 		}
 		sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
@@ -229,10 +216,77 @@ func parseCatalog(data []byte) ([]CatalogProvider, error) {
 			Name:      key,
 			Models:    models,
 			CheckedAt: checked,
-			ETag:      strings.TrimSpace(entry.ETag),
+			ETag:      stringField(entry, "etag"),
 		})
 	}
 	return providers, nil
+}
+
+// modelItems returns the object entries of a models list, skipping anything
+// shaped otherwise; a non-list yields no items but never an error, so the
+// provider entry survives with best-effort models.
+func modelItems(value any) []map[string]any {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// stringField renders one entry field best-effort: strings trimmed, integral
+// numbers literally, booleans literally, objects and arrays as compact JSON;
+// missing or null renders empty.
+func stringField(entry map[string]any, key string) string {
+	if entry == nil {
+		return ""
+	}
+	return stringify(entry[key])
+}
+
+// timestampField renders a freshness marker the live cache stores either as
+// an ISO string or as epoch milliseconds.
+func timestampField(entry map[string]any, key string) string {
+	if entry == nil {
+		return ""
+	}
+	if s, ok := entry[key].(string); ok {
+		return strings.TrimSpace(s)
+	}
+	if entry[key] == nil {
+		return ""
+	}
+	return stringify(entry[key])
+}
+
+func stringify(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	default:
+		data, err := json.Marshal(value)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
 }
 
 func formatCost(value any) string {

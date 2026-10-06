@@ -231,6 +231,126 @@ func TestDerivedRebuildReflectsChange(t *testing.T) {
 	}
 }
 
+const (
+	epochCatalogFixture = `{
+  "acme": {
+    "models": [
+      {"id": "code-large", "name": "Code Large", "cost": {"input": 0.01}, "contextWindow": 200000},
+      {"id": "extra-9", "name": "Extra 9", "cost": {"input": 0.02}, "contextWindow": 100000},
+      {"id": "other-1", "name": "Other 1"}
+    ],
+    "checkedAt": 1789027833963,
+    "lastModified": 1788948060000,
+    "etag": "etag-acme"
+  },
+  "beta": {
+    "models": [
+      {"id": "model-x", "name": "Model X", "cost": {"input": 0.03}, "contextWindow": 50000},
+      {"id": "model-y", "name": "Model Y"}
+    ],
+    "checkedAt": 1789027833963,
+    "lastModified": 1788948060000,
+    "etag": "etag-beta"
+  }
+}`
+
+	malformedCatalogFixture = `{
+  "acme": {
+    "models": [
+      {"id": "code-large", "name": "Code Large"},
+      "junk-entry",
+      {"id": "extra-9", "name": "Extra 9"}
+    ],
+    "checkedAt": 1789027833963,
+    "etag": "etag-acme"
+  }
+}`
+
+	malformedProvidersFixture = `{
+  "providers": {
+    "acme": {
+      "name": "Acme",
+      "api": "openai-completions",
+      "baseUrl": 12345,
+      "models": [{"id": "code-large"}]
+    }
+  }
+}`
+)
+
+func TestLoadCatalogEpochTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	path := writeDerivedFile(t, dir, "models-store.json", epochCatalogFixture)
+
+	snap, err := derived.LoadCatalog(path)
+	if err != nil {
+		t.Fatalf("LoadCatalog() error = %v", err)
+	}
+	if len(snap.Providers) != 2 {
+		t.Fatalf("catalog providers = %d, want 2 (numeric timestamps must not drop providers)", len(snap.Providers))
+	}
+	if snap.TotalModels != 5 {
+		t.Fatalf("TotalModels = %d, want 5", snap.TotalModels)
+	}
+	byName := map[string]derived.CatalogProvider{}
+	for _, p := range snap.Providers {
+		byName[p.Name] = p
+	}
+	acme := byName["acme"]
+	if !strings.Contains(acme.CheckedAt, "1789027833963") {
+		t.Errorf("acme CheckedAt = %q, want the epoch value", acme.CheckedAt)
+	}
+	if len(acme.Models) != 3 {
+		t.Fatalf("acme models = %d, want 3", len(acme.Models))
+	}
+	if acme.Models[0].Cost == "" {
+		t.Error("object cost must render best-effort, got empty")
+	}
+	if acme.Models[0].ContextWindow != 200000 {
+		t.Errorf("ContextWindow = %d, want 200000", acme.Models[0].ContextWindow)
+	}
+	t.Logf("epoch catalog: providers=2 total=5 checkedAt=%q", acme.CheckedAt)
+}
+
+func TestLoadCatalogMalformedFieldSurvives(t *testing.T) {
+	dir := t.TempDir()
+	path := writeDerivedFile(t, dir, "models-store.json", malformedCatalogFixture)
+
+	snap, err := derived.LoadCatalog(path)
+	if err != nil {
+		t.Fatalf("LoadCatalog() error = %v", err)
+	}
+	if len(snap.Providers) != 1 {
+		t.Fatalf("catalog providers = %d, want 1 (one bad field must not drop the entry)", len(snap.Providers))
+	}
+	acme := snap.Providers[0]
+	if acme.Name != "acme" {
+		t.Fatalf("provider = %q, want acme", acme.Name)
+	}
+	if len(acme.Models) != 2 {
+		t.Fatalf("acme models = %d, want 2 (junk element skipped, valid kept)", len(acme.Models))
+	}
+	if snap.TotalModels != 2 {
+		t.Errorf("TotalModels = %d, want 2", snap.TotalModels)
+	}
+}
+
+func TestLoadProvidersMalformedFieldSurvives(t *testing.T) {
+	dir := t.TempDir()
+	path := writeDerivedFile(t, dir, "models.json", malformedProvidersFixture)
+
+	snap, err := derived.LoadProviders(path)
+	if err != nil {
+		t.Fatalf("LoadProviders() error = %v", err)
+	}
+	if len(snap.Providers) != 1 {
+		t.Fatalf("providers = %d, want 1 (numeric baseUrl must not drop the entry)", len(snap.Providers))
+	}
+	if snap.Providers[0].ModelCount != 1 {
+		t.Errorf("ModelCount = %d, want 1", snap.Providers[0].ModelCount)
+	}
+}
+
 func TestDerivedLoadIsReadOnly(t *testing.T) {
 	dir := t.TempDir()
 	providersPath := writeDerivedFile(t, dir, "models.json", providersFixture)
