@@ -1,0 +1,24 @@
+╭─ ● Sections ─────────╮╭─ Models ─────────────────────────────────────────────╮
+│CONFIG                ││❯ k1 [scalar] v1                                      │
+│❯ Models              ││  b1 [bool] false                                     │
+│  Model Profiles      ││  ch [chain] 2 items                                  │
+│  Agents              ││  al [alias] m1                                       │
+│  Categories          ││                                                      │
+│  Telemetry           ││                                                      │
+│  Git                 ││                                                      │
+│  $schema (ro)        ││                                                      │
+│MCP                   ││                                                      │
+│  Servers             ││                                                      │
+│  Tools (ro)          ││                                                      │
+│PROVIDERS (ro)        │╰──────────────────────────────────────────────────────╯
+│  Connections (ro)    │╭─ models/k1 ──────────────────────────────────────────╮
+│  Catalog (ro)        ││❯ k1: v1                                              │
+│                      ││                                                      │
+│                      ││                                                      │
+│                      ││                                                      │
+│                      ││                                                      │
+│                      ││                                                      │
+│                      ││                                                      │
+╰──────────────────────╯╰──────────────────────────────────────────────────────╯
+j/k move  enter open  [ ] cycle  1-9,0 jump  s save  r reload  ? help  q quit   
+/tmp/omo.jsonc · clean                                                     ready
