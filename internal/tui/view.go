@@ -355,6 +355,8 @@ func (m *Model) renderOverlayBox() string {
 	case OverlayMCPReveal:
 		lines := append(strings.Split(m.revealText, "\n"), "", "[x/esc] close")
 		return strings.Join(m.paintBox("Reveal secrets", min(m.width-4, 76), lines), "\n")
+	case OverlayPicker:
+		return m.renderPicker()
 	default:
 		return ""
 	}

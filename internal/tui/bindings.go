@@ -239,7 +239,7 @@ var bindingTables = []ContextTable{
 		},
 	},
 	{
-		Name: ctxPicker, Title: "Picker (next wave)",
+		Name: ctxPicker, Title: "Picker",
 		Keys: []Binding{
 			{Key: "enter", Label: "enter", Desc: "select", Act: actPickerSelect, Bar: true},
 			{Key: "esc", Label: "esc", Desc: "cancel", Act: actPickerCancel, Bar: true},

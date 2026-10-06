@@ -43,6 +43,8 @@ func (m *Model) contextName() string {
 			return ctxMCPAdd
 		case OverlayMCPReveal:
 			return ctxMCPReveal
+		case OverlayPicker:
+			return ctxPicker
 		}
 	}
 	if m.filterMode {
@@ -287,6 +289,10 @@ func (m *Model) openEdit() {
 		m.status = "use space to toggle bools"
 		return
 	}
+	if isPickerPath(l.Path) {
+		m.openPicker(l.Path, l.Value)
+		return
+	}
 	m.overlay = OverlayEdit
 	m.editPath = l.Path
 	m.editTitle = "Edit " + l.Path
@@ -419,6 +425,9 @@ func (m *Model) reload() {
 // handleOverlayKey dispatches overlay keys through the binding table;
 // printable runes fall through into the edit/add buffers.
 func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.overlay == OverlayPicker {
+		return m.handlePickerKey(msg)
+	}
 	if b, ok := lookupAction(tableFor(m.contextName()), msg.String()); ok {
 		switch b.Act {
 		case actConfirm:
@@ -486,6 +495,7 @@ func (m *Model) closeOverlay() {
 	m.pendingMCP = ""
 	m.renameFrom = ""
 	m.renameTo = ""
+	m.picker = nil
 }
 
 func (m *Model) confirm() (tea.Model, tea.Cmd) {
