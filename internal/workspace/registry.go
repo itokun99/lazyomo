@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -163,15 +165,27 @@ func findProjectConfig(cfg RegistryConfig) (string, []projectSkip) {
 	return "", skips
 }
 
-// loadMCP registers the global MCP file once it is present and readable. The
-// document session and its strict-JSON validation arrive with internal/mcpfile
-// in a later wave; until then Session stays nil. Unlike the project layer,
-// symlinks are allowed here: the agent directory is a fixed, user-owned
-// location that dotfile setups commonly link.
+// loadMCP registers the global MCP file. Its path is fixed and known, so a
+// missing file also registers as the writable creation target: the editor's
+// first add creates it. A directory, or a file that cannot be read, stays a
+// diagnostic without a source (the runtime cannot load it either). Unlike
+// the project layer, symlinks are allowed here: the agent directory is a
+// fixed, user-owned location that dotfile setups commonly link.
 func (r *Registry) loadMCP(cfg RegistryConfig) {
 	path := filepath.Join(cfg.AgentDir, mcpConfigName)
 	info, err := os.Stat(path)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			r.skip(Diagnostic{SourceID: IDMCP, Path: path, Reason: "mcp.json not found; the first add creates it"})
+			r.add(Source{
+				ID:       IDMCP,
+				Path:     path,
+				Kind:     KindExternal,
+				Schema:   SchemaMCPServers,
+				Writable: true,
+			})
+			return
+		}
 		r.skip(Diagnostic{SourceID: IDMCP, Path: path, Reason: err.Error()})
 		return
 	}

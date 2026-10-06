@@ -39,10 +39,20 @@ func (m *Model) contextName() string {
 			return ctxError
 		case OverlayHelp:
 			return ctxHelp
+		case OverlayMCPAdd:
+			return ctxMCPAdd
+		case OverlayMCPReveal:
+			return ctxMCPReveal
 		}
 	}
 	if m.filterMode {
 		return ctxFilter
+	}
+	if row := m.selSide(); row != nil && row.mcp && m.focus != PaneSections {
+		if m.focus == PaneDetail {
+			return ctxMCPDetail
+		}
+		return ctxMCPList
 	}
 	switch m.focus {
 	case PaneSections:
@@ -130,6 +140,8 @@ func (m *Model) doAction(act Action, arg int) (tea.Model, tea.Cmd) {
 		m.openDelete()
 	case actToggle:
 		m.toggle()
+	case actReveal:
+		m.mcpReveal()
 	case actSave:
 		m.save()
 	case actReload:
@@ -172,14 +184,14 @@ func (m *Model) moveDown() {
 			m.refresh()
 		}
 	case PaneEntries:
-		if m.entryIdx < len(m.entries)-1 {
+		if m.entryIdx < m.listLen()-1 {
 			m.entryIdx++
 			m.refresh()
 		}
 	case PaneDetail:
-		if m.detailLn < len(m.detail.Lines)-1 {
+		if m.detailLn < m.detailListLen()-1 {
 			m.detailLn++
-			m.detailOff = adjustOffset(m.detailOff, m.detailLn, m.detailViewport())
+			m.detailOff = adjustOffset(m.detailOff, m.detailLn, m.detailListViewport())
 		}
 	}
 }
@@ -200,18 +212,23 @@ func (m *Model) moveUp() {
 	case PaneDetail:
 		if m.detailLn > 0 {
 			m.detailLn--
-			m.detailOff = adjustOffset(m.detailOff, m.detailLn, m.detailViewport())
+			m.detailOff = adjustOffset(m.detailOff, m.detailLn, m.detailListViewport())
 		}
 	}
 }
 
 // sideReadOnly reports whether the selected side row rejects edits: future
-// placeholder rows always do until a later wave wires them.
+// placeholder rows always do, and the MCP servers row does while no
+// editable session is bound.
 func (m *Model) sideReadOnly() bool {
-	if row := m.selSide(); row != nil && row.hasFuture {
-		return true
+	row := m.selSide()
+	if row == nil {
+		return false
 	}
-	return false
+	if row.mcp {
+		return m.mcp == nil
+	}
+	return row.hasFuture
 }
 
 func (m *Model) readOnlySelected() bool {
@@ -229,6 +246,10 @@ func (m *Model) readOnlySelected() bool {
 
 func (m *Model) openEdit() {
 	if m.focus != PaneEntries && m.focus != PaneDetail {
+		return
+	}
+	if m.sideMCP() {
+		m.mcpOpenEdit()
 		return
 	}
 	if m.curSection() == nil || m.readOnlySelected() {
@@ -277,6 +298,10 @@ func (m *Model) openAdd() {
 	if m.focus != PaneEntries {
 		return
 	}
+	if m.sideMCP() {
+		m.mcpOpenAdd()
+		return
+	}
 	sec := m.curSection()
 	if sec == nil || sec.ReadOnly || m.readOnlySelected() {
 		m.status = "read-only section"
@@ -289,6 +314,10 @@ func (m *Model) openAdd() {
 
 func (m *Model) openDelete() {
 	if m.focus != PaneEntries {
+		return
+	}
+	if m.sideMCP() {
+		m.mcpOpenDelete()
 		return
 	}
 	sec := m.curSection()
@@ -311,6 +340,10 @@ func (m *Model) openDelete() {
 
 func (m *Model) toggle() {
 	if m.focus != PaneEntries && m.focus != PaneDetail {
+		return
+	}
+	if m.sideMCP() {
+		m.mcpToggle()
 		return
 	}
 	if m.curSection() == nil || m.readOnlySelected() {
@@ -397,12 +430,24 @@ func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.submitEdit()
 			} else if m.overlay == OverlayAdd {
 				m.submitAdd()
+			} else if m.overlay == OverlayMCPAdd {
+				m.mcpAddSubmit()
 			}
 		case actBackspace:
 			if m.overlay == OverlayEdit && len(m.editBuf) > 0 {
 				m.editBuf = m.editBuf[:len(m.editBuf)-1]
 			} else if m.overlay == OverlayAdd && len(m.addBuf) > 0 {
 				m.addBuf = m.addBuf[:len(m.addBuf)-1]
+			} else if m.overlay == OverlayMCPAdd && m.mcpAddStage == 0 && len(m.addBuf) > 0 {
+				m.addBuf = m.addBuf[:len(m.addBuf)-1]
+			}
+		case actMoveUp:
+			if m.overlay == OverlayMCPAdd {
+				m.mcpAddMove(-1)
+			}
+		case actMoveDown:
+			if m.overlay == OverlayMCPAdd {
+				m.mcpAddMove(1)
 			}
 		case actHelpDown:
 			m.helpScroll++
@@ -419,6 +464,10 @@ func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.editBuf += string(msg.Runes)
 		case OverlayAdd:
 			m.addBuf += string(msg.Runes)
+		case OverlayMCPAdd:
+			if m.mcpAddStage == 0 {
+				m.addBuf += string(msg.Runes)
+			}
 		}
 	}
 	return m, nil
@@ -431,6 +480,12 @@ func (m *Model) closeOverlay() {
 	m.confirmKind = confirmNone
 	m.editErr = ""
 	m.addErr = ""
+	m.editMCP = false
+	m.editRename = false
+	m.revealText = ""
+	m.pendingMCP = ""
+	m.renameFrom = ""
+	m.renameTo = ""
 }
 
 func (m *Model) confirm() (tea.Model, tea.Cmd) {
@@ -467,11 +522,45 @@ func (m *Model) confirm() (tea.Model, tea.Cmd) {
 		}
 		m.status = "deleted " + m.delPath
 		m.refresh()
+	case confirmMCPRemove:
+		if m.mcp == nil {
+			m.status = "mcp.json unavailable"
+			return m, nil
+		}
+		if err := m.mcp.RemoveServer(m.pendingMCP); err != nil {
+			m.status = "delete failed: " + err.Error()
+			m.refresh()
+			return m, nil
+		}
+		m.status = "removed " + m.pendingMCP
+		m.pendingMCP = ""
+		m.refresh()
+	case confirmRename:
+		if m.mcp == nil {
+			m.status = "mcp.json unavailable"
+			return m, nil
+		}
+		result, err := m.mcp.RenameServer(m.renameFrom, m.renameTo)
+		if err != nil {
+			m.status = "rename failed: " + err.Error()
+			m.refresh()
+			return m, nil
+		}
+		m.status = "renamed " + result.OldName + " → " + result.NewName + "; " + result.Warning
+		m.refresh()
 	}
 	return m, nil
 }
 
 func (m *Model) submitEdit() {
+	if m.editMCP {
+		if m.editRename {
+			m.submitRename()
+			return
+		}
+		m.submitMCPField()
+		return
+	}
 	if strings.TrimSpace(m.editBuf) == "" {
 		m.editErr = "value must not be empty"
 		return

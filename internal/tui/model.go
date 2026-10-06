@@ -3,7 +3,9 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/itokun99/lazyomo/internal/derived"
 	"github.com/itokun99/lazyomo/internal/editor"
+	"github.com/itokun99/lazyomo/internal/mcpfile"
 	"github.com/itokun99/lazyomo/internal/workspace"
 )
 
@@ -53,6 +55,8 @@ const (
 	OverlayEdit
 	OverlayAdd
 	OverlayError
+	OverlayMCPAdd
+	OverlayMCPReveal
 )
 
 // confirmKind selects the pending confirmed action.
@@ -64,6 +68,8 @@ const (
 	confirmReload
 	confirmQuit
 	confirmDelete
+	confirmMCPRemove
+	confirmRename
 )
 
 // scrollMargin keeps the cursor away from list edges.
@@ -110,7 +116,44 @@ type Model struct {
 	addBuf      string
 	addErr      string
 	errorText   string
-	helpScroll  int
+
+	// MCP servers surface state: the bound session, its rendered list and
+	// detail, and the overlay targets for the add/rename/reveal flows.
+	mcp           MCPSurface
+	mcpPath       string
+	mcpRows       []mcpRow
+	mcpDetail     []mcpDetailLine
+	mcpAddStage   int
+	mcpAddTypeIdx int
+	mcpAddType    string
+	// Derived providers/catalog/tools state: explicit file paths plus the
+	// last loaded snapshots. Panes re-read on open so a changed file
+	// reflects on the next refresh; nothing derived is ever written.
+	modelsPath     string
+	storePath      string
+	toolsPath      string
+	providers      derived.ProvidersSnapshot
+	providersErr   string
+	providerRows   []providerRow
+	providerDetail []providerDetailLine
+	catalog        derived.CatalogSnapshot
+	catalogErr     string
+	catalogRows    []catalogRow
+	catalogDetail  []catalogDetailLine
+	tools          derived.ToolsSnapshot
+	toolsErr       string
+	toolsRows      []toolsRow
+	toolsDetail    []toolsDetailLine
+	editMCP        bool
+	editRename     bool
+	editServer     string
+	editField      string
+	editKind       mcpfile.FieldKind
+	revealText     string
+	pendingMCP     string
+	renameFrom     string
+	renameTo       string
+	helpScroll     int
 
 	filter     string
 	filterMode bool
@@ -128,6 +171,8 @@ type Model struct {
 func New(ws Workspace) *Model {
 	m := &Model{ws: ws, styles: DefaultStyles(), focus: PaneSections}
 	m.bindConfig()
+	m.bindMCP()
+	m.bindDerived()
 	m.refresh()
 	return m
 }
@@ -204,6 +249,18 @@ func (m *Model) dirtyCount() int {
 
 // activePath names the document the sections pane edits.
 func (m *Model) activePath() string {
+	if m.sideMCP() && m.mcpPath != "" {
+		return m.mcpPath
+	}
+	if m.sideProviders() && m.modelsPath != "" {
+		return m.modelsPath
+	}
+	if m.sideCatalog() && m.storePath != "" {
+		return m.storePath
+	}
+	if m.sideTools() && m.toolsPath != "" {
+		return m.toolsPath
+	}
 	if m.configPath == "" {
 		return "(no file)"
 	}
@@ -221,6 +278,22 @@ func (m *Model) refresh() {
 	m.flat = flattenSide(m.groups)
 	m.secIdx = clamp(m.secIdx, len(m.flat))
 	m.secOffset = clampWindow(m.secOffset, sideCursorLine(m.groups, m.secIdx), m.secViewport(), sideTotalLines(m.groups))
+	if m.sideMCP() {
+		m.refreshMCP()
+		return
+	}
+	if m.sideProviders() {
+		m.refreshProviders()
+		return
+	}
+	if m.sideCatalog() {
+		m.refreshCatalog()
+		return
+	}
+	if m.sideTools() {
+		m.refreshTools()
+		return
+	}
 	sec := m.curSection()
 	m.entries = nil
 	if sec != nil {

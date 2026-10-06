@@ -204,12 +204,17 @@ func TestBindingTableConsistency(t *testing.T) {
 		bar := keybarFor(table.Name)
 		parts := strings.Split(bar, "  ")
 		allowed := map[string]bool{}
+		seen := map[string]bool{}
 		for _, b := range table.Keys {
 			pair := b.Label + " " + b.Desc
 			allowed[pair] = true
 			if b.Bar && !strings.Contains(bar, pair) {
 				t.Errorf("context %s keybar missing bar pair %q", table.Name, pair)
 			}
+			if seen[b.Key] {
+				t.Errorf("context %s declares key %q twice (dispatch shadowing)", table.Name, b.Key)
+			}
+			seen[b.Key] = true
 		}
 		for _, p := range parts {
 			if p == "" {
@@ -231,6 +236,24 @@ func TestBindingTableConsistency(t *testing.T) {
 				t.Errorf("help missing pair %q/%q of context %s", b.Label, b.Desc, table.Name)
 			}
 		}
+	}
+	// The MCP contexts must dispatch exactly through their own tables, and
+	// the servers keybar must advertise the reveal key.
+	for _, name := range []string{ctxMCPList, ctxMCPDetail, ctxMCPAdd, ctxMCPReveal} {
+		table := tableFor(name)
+		if table == nil || len(table.Keys) == 0 {
+			t.Errorf("context %s has no dispatch table", name)
+			continue
+		}
+		for _, b := range table.Keys {
+			got, ok := lookupAction(table, b.Key)
+			if !ok || got.Act != b.Act {
+				t.Errorf("context %s key %q does not resolve to its declared action", name, b.Key)
+			}
+		}
+	}
+	if !strings.Contains(keybarFor(ctxMCPList), "x reveal") {
+		t.Error("MCP servers keybar must advertise x reveal")
 	}
 }
 
@@ -269,15 +292,26 @@ func TestDigitJumpAcrossGroups(t *testing.T) {
 	if row := m.selSide(); row == nil || row.label != "Servers" {
 		t.Errorf("key 8 -> %+v, want Servers", row)
 	}
-	if len(m.entries) != 0 {
-		t.Errorf("placeholder entries = %d, want empty", len(m.entries))
+	// Servers is the live MCP surface now; without a bound session it
+	// shows the unavailable diagnostic and refuses edits.
+	if len(m.mcpRows) != 0 {
+		t.Errorf("mcp rows = %d, want 0 without a session", len(m.mcpRows))
 	}
 	m = sendKeys(t, m, "e", "a", "d", " ")
-	if m.status != "read-only section" {
-		t.Errorf("status = %q, want read-only section", m.status)
+	if m.status != "mcp.json unavailable" {
+		t.Errorf("status = %q, want mcp.json unavailable", m.status)
 	}
 	if m.overlay != OverlayNone {
-		t.Errorf("overlay = %v, want none on placeholder", m.overlay)
+		t.Errorf("overlay = %v, want none without a session", m.overlay)
+	}
+	// Tools stays a read-only placeholder.
+	m = sendKeys(t, m, "9")
+	if row := m.selSide(); row == nil || row.label != "Tools" {
+		t.Errorf("key 9 -> %+v, want Tools", row)
+	}
+	m = sendKeys(t, m, "e")
+	if m.status != "read-only section" {
+		t.Errorf("status = %q, want read-only section", m.status)
 	}
 }
 

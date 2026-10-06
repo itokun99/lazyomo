@@ -69,6 +69,21 @@ func (m *Model) leftW() int {
 // entriesTitle names the entries pane after the selected side row.
 func (m *Model) entriesTitle() string {
 	if row := m.selSide(); row != nil {
+		if row.mcp {
+			if m.mcpPath != "" {
+				return "MCP servers · " + m.mcpPath
+			}
+			return "MCP servers"
+		}
+		if m.sideProviders() {
+			return "Connections · derived"
+		}
+		if m.sideCatalog() {
+			return "Catalog · derived"
+		}
+		if m.sideTools() {
+			return "Tools · derived"
+		}
 		if row.hasFuture {
 			return row.label
 		}
@@ -82,6 +97,12 @@ func (m *Model) entriesTitle() string {
 
 // detailTitle names the detail pane after the entry, flagged read-only.
 func (m *Model) detailTitle() string {
+	if row := m.selSide(); row != nil && row.mcp {
+		return "Detail"
+	}
+	if m.sideDerived() {
+		return "Detail · derived"
+	}
 	ro := ""
 	if sec := m.curSection(); sec != nil && sec.ReadOnly {
 		ro = " (read-only)"
@@ -164,6 +185,18 @@ func sideRowLabel(row sideRow) string {
 
 // entryLines renders the entries list rows for the inner width.
 func (m *Model) entryLines(inner int) []string {
+	if m.sideMCP() {
+		return m.mcpEntryLines(inner)
+	}
+	if m.sideProviders() {
+		return m.providerEntryLines(inner)
+	}
+	if m.sideCatalog() {
+		return m.catalogEntryLines(inner)
+	}
+	if m.sideTools() {
+		return m.toolsEntryLines(inner)
+	}
 	focused := m.focus == PaneEntries
 	if len(m.entries) == 0 {
 		return []string{m.styles.Help.Render(padRight("  (no entries)", inner))}
@@ -199,6 +232,18 @@ func (m *Model) entryLines(inner int) []string {
 
 // detailLines renders the detail rows for the inner width.
 func (m *Model) detailLines(inner int) []string {
+	if m.sideMCP() {
+		return m.mcpDetailLines(inner)
+	}
+	if m.sideProviders() {
+		return m.providerDetailLines(inner)
+	}
+	if m.sideCatalog() {
+		return m.catalogDetailLines(inner)
+	}
+	if m.sideTools() {
+		return m.toolsDetailLines(inner)
+	}
 	focused := m.focus == PaneDetail
 	if len(m.detail.Lines) == 0 {
 		return []string{m.styles.Help.Render(padRight("  (nothing selected)", inner))}
@@ -305,6 +350,11 @@ func (m *Model) renderOverlayBox() string {
 	case OverlayError:
 		lines := append(strings.Split(m.errorText, "\n"), "", "[enter/esc] close")
 		return strings.Join(m.paintBox("Error", min(m.width-4, 60), lines), "\n")
+	case OverlayMCPAdd:
+		return strings.Join(m.paintBox(m.mcpAddTitle(), min(m.width-4, 60), m.mcpAddLines()), "\n")
+	case OverlayMCPReveal:
+		lines := append(strings.Split(m.revealText, "\n"), "", "[x/esc] close")
+		return strings.Join(m.paintBox("Reveal secrets", min(m.width-4, 76), lines), "\n")
 	default:
 		return ""
 	}
@@ -344,6 +394,7 @@ func (m *Model) helpLines() []string {
 			ctxEdit:   "type to edit",
 			ctxAdd:    "type to add",
 			ctxPicker: "type to filter",
+			ctxMCPAdd: "type a name, pick a template",
 		}
 		if note, ok := notes[table.Name]; ok {
 			lines = append(lines, "  "+note)
