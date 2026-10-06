@@ -24,6 +24,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// contextName resolves the binding-table context for the current state:
+// the topmost overlay wins, then filter input, then the focused pane.
+func (m *Model) contextName() string {
+	if m.overlay != OverlayNone {
+		switch m.overlay {
+		case OverlayConfirm:
+			return ctxConfirm
+		case OverlayEdit:
+			return ctxEdit
+		case OverlayAdd:
+			return ctxAdd
+		case OverlayError:
+			return ctxError
+		case OverlayHelp:
+			return ctxHelp
+		}
+	}
+	if m.filterMode {
+		return ctxFilter
+	}
+	switch m.focus {
+	case PaneSections:
+		return ctxSections
+	case PaneEntries:
+		return ctxEntries
+	default:
+		return ctxDetail
+	}
+}
+
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
@@ -37,123 +67,106 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleNormalKey(msg)
 }
 
+// handleNormalKey dispatches purely through the binding table.
 func (m *Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "1", "2", "3", "4", "5":
-		n := int(msg.String()[0] - '1')
-		if n < len(m.sections) {
-			m.secIdx = n
-			m.entryIdx = 0
-			m.focus = PaneEntries
-			m.refresh()
-		}
-		return m, nil
-	case "0":
-		if m.focus == PaneEntries {
-			m.focus = PaneDetail
-		} else {
-			m.focus = PaneEntries
-		}
-		return m, nil
-	case "j", "down":
-		m.moveDown()
-		return m, nil
-	case "k", "up":
+	if b, ok := lookupAction(tableFor(m.contextName()), msg.String()); ok {
+		return m.doAction(b.Act, b.Arg)
+	}
+	return m, nil
+}
+
+// doAction executes one binding-table action. actQuit is the only action
+// that can end the program; every other action mutates the model.
+func (m *Model) doAction(act Action, arg int) (tea.Model, tea.Cmd) {
+	switch act {
+	case actMoveUp:
 		m.moveUp()
-		return m, nil
-	case "h", "left":
+	case actMoveDown:
+		m.moveDown()
+	case actFocusLeft:
 		if m.focus == PaneEntries {
 			m.focus = PaneSections
 		} else if m.focus == PaneDetail {
 			m.focus = PaneEntries
 		}
-		return m, nil
-	case "l", "right":
+	case actFocusRight:
 		if m.focus == PaneSections {
 			m.focus = PaneEntries
 		} else if m.focus == PaneEntries {
 			m.focus = PaneDetail
 		}
-		return m, nil
-	case "tab":
+	case actNextPane:
 		m.focus = (m.focus + 1) % 3
-		return m, nil
-	case "shift+tab":
+	case actPrevPane:
 		m.focus = (m.focus + 2) % 3
-		return m, nil
-	case "[":
-		if len(m.sections) > 0 {
-			m.secIdx = (m.secIdx + len(m.sections) - 1) % len(m.sections)
+	case actPrevSection:
+		m.cycleSection(-1)
+	case actNextSection:
+		m.cycleSection(1)
+	case actJumpVisible:
+		if arg >= 0 && arg < len(m.flat) {
+			m.secIdx = arg
 			m.entryIdx = 0
+			m.focus = PaneEntries
 			m.refresh()
 		}
-		return m, nil
-	case "]":
-		if len(m.sections) > 0 {
-			m.secIdx = (m.secIdx + 1) % len(m.sections)
-			m.entryIdx = 0
-			m.refresh()
-		}
-		return m, nil
-	case "enter":
+	case actDrillDown:
 		if m.focus == PaneSections {
 			m.focus = PaneEntries
 		} else if m.focus == PaneEntries {
 			m.focus = PaneDetail
 		}
-		return m, nil
-	case "esc":
+	case actClimbUp:
 		if m.focus == PaneDetail {
 			m.focus = PaneEntries
 		} else if m.focus == PaneEntries {
 			m.focus = PaneSections
 		}
-		return m, nil
-	case "e":
+	case actOpenEdit:
 		m.openEdit()
-		return m, nil
-	case "a":
+	case actOpenAdd:
 		m.openAdd()
-		return m, nil
-	case "d":
+	case actOpenDelete:
 		m.openDelete()
-		return m, nil
-	case " ":
+	case actToggle:
 		m.toggle()
-		return m, nil
-	case "s":
+	case actSave:
 		m.save()
-		return m, nil
-	case "r":
+	case actReload:
 		m.reload()
-		return m, nil
-	case "?":
+	case actHelp:
 		m.overlay = OverlayHelp
 		m.helpScroll = 0
-		return m, nil
-	case "q":
-		if m.dirtyCount() > 0 {
-			m.overlay = OverlayConfirm
-			m.confirmKind = confirmQuit
-			m.confirmText = "Quit without saving?"
-		} else {
-			return m, tea.Quit
-		}
-		return m, nil
-	case "/":
+	case actFilter:
 		if m.focus == PaneEntries {
 			m.filterMode = true
 			m.refresh()
 		}
-		return m, nil
+	case actQuit:
+		if m.dirtyCount() > 0 {
+			m.overlay = OverlayConfirm
+			m.confirmKind = confirmQuit
+			m.confirmText = confirmLines("Quit without saving?", m.dirtyFiles())
+		} else {
+			return m, tea.Quit
+		}
 	}
 	return m, nil
+}
+
+func (m *Model) cycleSection(dir int) {
+	if len(m.flat) == 0 {
+		return
+	}
+	m.secIdx = (m.secIdx + dir + len(m.flat)) % len(m.flat)
+	m.entryIdx = 0
+	m.refresh()
 }
 
 func (m *Model) moveDown() {
 	switch m.focus {
 	case PaneSections:
-		if m.secIdx < len(m.sections)-1 {
+		if m.secIdx < len(m.flat)-1 {
 			m.secIdx++
 			m.entryIdx = 0
 			m.refresh()
@@ -192,7 +205,19 @@ func (m *Model) moveUp() {
 	}
 }
 
+// sideReadOnly reports whether the selected side row rejects edits: future
+// placeholder rows always do until a later wave wires them.
+func (m *Model) sideReadOnly() bool {
+	if row := m.selSide(); row != nil && row.hasFuture {
+		return true
+	}
+	return false
+}
+
 func (m *Model) readOnlySelected() bool {
+	if m.sideReadOnly() {
+		return true
+	}
 	if sec := m.curSection(); sec != nil && sec.ReadOnly {
 		return true
 	}
@@ -206,7 +231,7 @@ func (m *Model) openEdit() {
 	if m.focus != PaneEntries && m.focus != PaneDetail {
 		return
 	}
-	if m.readOnlySelected() {
+	if m.curSection() == nil || m.readOnlySelected() {
 		m.status = "read-only section"
 		return
 	}
@@ -253,10 +278,7 @@ func (m *Model) openAdd() {
 		return
 	}
 	sec := m.curSection()
-	if sec == nil {
-		return
-	}
-	if sec.ReadOnly || m.readOnlySelected() {
+	if sec == nil || sec.ReadOnly || m.readOnlySelected() {
 		m.status = "read-only section"
 		return
 	}
@@ -272,6 +294,7 @@ func (m *Model) openDelete() {
 	sec := m.curSection()
 	e := m.selEntry()
 	if sec == nil || e == nil {
+		m.status = "read-only section"
 		return
 	}
 	if sec.ReadOnly || e.ReadOnly {
@@ -290,7 +313,7 @@ func (m *Model) toggle() {
 	if m.focus != PaneEntries && m.focus != PaneDetail {
 		return
 	}
-	if m.readOnlySelected() {
+	if m.curSection() == nil || m.readOnlySelected() {
 		m.status = "read-only section"
 		return
 	}
@@ -332,19 +355,19 @@ func (m *Model) toggle() {
 }
 
 func (m *Model) save() {
-	n := m.dirtyCount()
-	if n == 0 {
+	files := m.dirtyFiles()
+	if len(files) == 0 {
 		m.status = "already saved"
 		return
 	}
 	m.overlay = OverlayConfirm
 	m.confirmKind = confirmSave
-	m.confirmText = fmt.Sprintf("Save %d changes?", n)
+	m.confirmText = confirmLines(fmt.Sprintf("Save %d changes?", m.dirtyCount()), files)
 }
 
 func (m *Model) reload() {
-	n := m.dirtyCount()
-	if n == 0 {
+	files := m.dirtyFiles()
+	if len(files) == 0 {
 		if err := m.ws.Reload(); err != nil {
 			m.overlay = OverlayError
 			m.errorText = "reload failed: " + err.Error()
@@ -357,70 +380,57 @@ func (m *Model) reload() {
 	}
 	m.overlay = OverlayConfirm
 	m.confirmKind = confirmReload
-	m.confirmText = fmt.Sprintf("Reload and lose %d changes?", n)
+	m.confirmText = confirmLines(fmt.Sprintf("Reload and lose %d changes?", m.dirtyCount()), files)
 }
 
+// handleOverlayKey dispatches overlay keys through the binding table;
+// printable runes fall through into the edit/add buffers.
 func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch m.overlay {
-	case OverlayHelp:
-		switch msg.String() {
-		case "?", "esc":
-			m.overlay = OverlayNone
-		case "j", "down":
+	if b, ok := lookupAction(tableFor(m.contextName()), msg.String()); ok {
+		switch b.Act {
+		case actConfirm:
+			return m.confirm()
+		case actCancel:
+			m.closeOverlay()
+		case actSubmit:
+			if m.overlay == OverlayEdit {
+				m.submitEdit()
+			} else if m.overlay == OverlayAdd {
+				m.submitAdd()
+			}
+		case actBackspace:
+			if m.overlay == OverlayEdit && len(m.editBuf) > 0 {
+				m.editBuf = m.editBuf[:len(m.editBuf)-1]
+			} else if m.overlay == OverlayAdd && len(m.addBuf) > 0 {
+				m.addBuf = m.addBuf[:len(m.addBuf)-1]
+			}
+		case actHelpDown:
 			m.helpScroll++
-		case "k", "up":
+		case actHelpUp:
 			if m.helpScroll > 0 {
 				m.helpScroll--
 			}
 		}
 		return m, nil
-	case OverlayError:
-		switch msg.String() {
-		case "enter", "esc":
-			m.overlay = OverlayNone
-		}
-		return m, nil
-	case OverlayConfirm:
-		switch msg.String() {
-		case "enter":
-			return m.confirm()
-		case "esc":
-			m.overlay = OverlayNone
-			m.confirmKind = confirmNone
-		}
-		return m, nil
-	case OverlayEdit:
-		switch msg.Type {
-		case tea.KeyEsc:
-			m.overlay = OverlayNone
-			m.editErr = ""
-		case tea.KeyEnter:
-			m.submitEdit()
-		case tea.KeyBackspace:
-			if len(m.editBuf) > 0 {
-				m.editBuf = m.editBuf[:len(m.editBuf)-1]
-			}
-		case tea.KeyRunes:
+	}
+	if msg.Type == tea.KeyRunes {
+		switch m.overlay {
+		case OverlayEdit:
 			m.editBuf += string(msg.Runes)
-		}
-		return m, nil
-	case OverlayAdd:
-		switch msg.Type {
-		case tea.KeyEsc:
-			m.overlay = OverlayNone
-			m.addErr = ""
-		case tea.KeyEnter:
-			m.submitAdd()
-		case tea.KeyBackspace:
-			if len(m.addBuf) > 0 {
-				m.addBuf = m.addBuf[:len(m.addBuf)-1]
-			}
-		case tea.KeyRunes:
+		case OverlayAdd:
 			m.addBuf += string(msg.Runes)
 		}
-		return m, nil
 	}
 	return m, nil
+}
+
+// closeOverlay cancels the topmost overlay (P5: esc cancels topmost
+// everywhere) and drops its transient errors.
+func (m *Model) closeOverlay() {
+	m.overlay = OverlayNone
+	m.confirmKind = confirmNone
+	m.editErr = ""
+	m.addErr = ""
 }
 
 func (m *Model) confirm() (tea.Model, tea.Cmd) {
@@ -434,6 +444,7 @@ func (m *Model) confirm() (tea.Model, tea.Cmd) {
 		if failed := saveFailure(result); failed != "" {
 			m.overlay = OverlayError
 			m.errorText = "save failed: " + failed
+			m.status = "save failed"
 			return m, nil
 		}
 		m.status = saveStatus(result)
@@ -503,24 +514,28 @@ func (m *Model) submitAdd() {
 	m.refresh()
 }
 
+// handleFilterKey dispatches filter keys through the binding table;
+// printable runes extend the query.
 func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
-		// esc clears the filter AND exits filter input mode, returning
-		// normal key handling (matches the "esc clear/close" hint).
-		m.filter = ""
-		m.filterMode = false
-		m.refresh()
-	case tea.KeyEnter:
-		m.filterMode = false
-		m.refresh()
-	case tea.KeyBackspace:
-		if len(m.filter) > 0 {
-			m.filter = m.filter[:len(m.filter)-1]
-			m.entryIdx = 0
+	if b, ok := lookupAction(tableFor(ctxFilter), msg.String()); ok {
+		switch b.Act {
+		case actFilterDone:
+			m.filterMode = false
 			m.refresh()
+		case actFilterClear:
+			m.filter = ""
+			m.filterMode = false
+			m.refresh()
+		case actFilterBackspace:
+			if len(m.filter) > 0 {
+				m.filter = m.filter[:len(m.filter)-1]
+				m.entryIdx = 0
+				m.refresh()
+			}
 		}
-	case tea.KeyRunes:
+		return m, nil
+	}
+	if msg.Type == tea.KeyRunes {
 		m.filter += string(msg.Runes)
 		m.entryIdx = 0
 		m.refresh()

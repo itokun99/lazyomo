@@ -15,6 +15,7 @@ type Workspace interface {
 	Sources() []workspace.Source
 	SaveAll() workspace.SaveResult
 	Reload() error
+	Stale() []workspace.StaleSource
 }
 
 // ConfigSurface is the editable section/entry surface a config source's
@@ -84,7 +85,12 @@ type Model struct {
 	styles     Styles
 
 	sections []editor.Section
+	// secIdx is the cursor over the flat selectable side-panel rows
+	// (CONFIG + MCP + PROVIDERS), not over sections. curSection
+	// resolves the bound editor section for config rows.
 	secIdx   int
+	groups   []sideGroup
+	flat     []sideRow
 	entries  []editor.Entry
 	entryIdx int
 	detail   editor.Detail
@@ -147,11 +153,24 @@ func (m *Model) Init() tea.Cmd {
 	return nil
 }
 
-func (m *Model) curSection() *editor.Section {
-	if len(m.sections) == 0 || m.secIdx < 0 || m.secIdx >= len(m.sections) {
+func (m *Model) selSide() *sideRow {
+	if len(m.flat) == 0 || m.secIdx < 0 || m.secIdx >= len(m.flat) {
 		return nil
 	}
-	return &m.sections[m.secIdx]
+	return &m.flat[m.secIdx]
+}
+
+func (m *Model) curSection() *editor.Section {
+	row := m.selSide()
+	if row == nil || row.hasFuture {
+		return nil
+	}
+	for i := range m.sections {
+		if m.sections[i].ID == row.section {
+			return &m.sections[i]
+		}
+	}
+	return nil
 }
 
 func (m *Model) selEntry() *editor.Entry {
@@ -198,7 +217,10 @@ func (m *Model) refresh() {
 		return
 	}
 	m.sections = m.config.Sections()
-	m.secIdx = clamp(m.secIdx, len(m.sections))
+	m.groups = buildSideGroups(m.sections)
+	m.flat = flattenSide(m.groups)
+	m.secIdx = clamp(m.secIdx, len(m.flat))
+	m.secOffset = clampWindow(m.secOffset, sideCursorLine(m.groups, m.secIdx), m.secViewport(), sideTotalLines(m.groups))
 	sec := m.curSection()
 	m.entries = nil
 	if sec != nil {
@@ -233,20 +255,110 @@ func filterEntries(entries []editor.Entry, filter string) []editor.Entry {
 	return out
 }
 
+func (m *Model) contentH() int {
+	return m.height - 2
+}
+
+func (m *Model) entriesH() int {
+	return m.contentH() * 60 / 100
+}
+
+func (m *Model) detailH() int {
+	return m.contentH() - m.entriesH()
+}
+
 func (m *Model) secViewport() int {
-	return max(1, m.height-2-2)
+	return max(1, m.contentH()-2)
 }
 
 func (m *Model) entriesViewport() int {
-	h := m.height - 2
-	entriesH := h * 60 / 100
-	return max(1, entriesH-2)
+	return max(1, m.entriesH()-2)
 }
 
 func (m *Model) detailViewport() int {
-	h := m.height - 2
-	entriesH := h * 60 / 100
-	return max(1, h-entriesH-2)
+	return max(1, m.detailH()-2)
+}
+
+// pickerChromeLines is the non-result chrome of the todo-13 picker box:
+// top/bottom borders, query line, header, footer, and one spacer. At
+// 80x24 the box is 76x20 for 14 result rows; at 120x40 it is 110x30
+// for 24. The picker overlay itself lands in a later wave; the geometry
+// and the binding table already pin its contract.
+const pickerChromeLines = 6
+
+func pickerBox(w, h int) (int, int) {
+	return min(110, w-4), min(30, h-4)
+}
+
+func pickerResultRows(w, h int) int {
+	_, bh := pickerBox(w, h)
+	return max(1, bh-pickerChromeLines)
+}
+
+// dirtyFile is one unsaved source for the save/quit confirms.
+type dirtyFile struct {
+	path  string
+	count int
+	stale bool
+}
+
+func (m *Model) dirtyFiles() []dirtyFile {
+	if m.ws == nil {
+		return nil
+	}
+	stale := map[string]bool{}
+	for _, s := range m.ws.Stale() {
+		stale[s.SourceID] = true
+	}
+	var out []dirtyFile
+	for _, src := range m.ws.Sources() {
+		if !src.Writable || src.Session == nil {
+			continue
+		}
+		if n := len(src.Session.DirtyPaths()); n > 0 {
+			out = append(out, dirtyFile{path: src.Path, count: n, stale: stale[src.ID]})
+		}
+	}
+	return out
+}
+
+// confirmLines builds a confirm body: title plus one line per dirty file,
+// stale files marked blocked.
+func confirmLines(title string, files []dirtyFile) string {
+	lines := []string{title}
+	for _, f := range files {
+		line := f.path + " \u00b7 dirty(" + itoa(f.count) + ")"
+		if f.stale {
+			line += " \u00b7 stale, blocked"
+		}
+		lines = append(lines, "  "+line)
+	}
+	return joinLines(lines)
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}
+
+func joinLines(lines []string) string {
+	out := ""
+	for i, l := range lines {
+		if i > 0 {
+			out += "\n"
+		}
+		out += l
+	}
+	return out
 }
 
 func adjustOffset(offset, idx, viewport int) int {

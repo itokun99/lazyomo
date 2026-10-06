@@ -9,6 +9,13 @@ import (
 	"github.com/itokun99/lazyomo/internal/editor"
 )
 
+// Wireframe-A layout (P1-P6): every pane is a hand-painted 1-line rounded
+// border box with its title inside the top border; exactly one pane carries
+// the focus frame (green border plus the ● title marker, so color is never
+// the sole cue); the keybar renders the binding table's bar subset for the
+// active context; the status line is exactly one line. Painting by hand
+// keeps every line exactly its pane width for the density contract.
+
 // View implements tea.Model.
 func (m *Model) View() string {
 	if m.width < MinWidth || m.height < MinHeight {
@@ -17,155 +24,233 @@ func (m *Model) View() string {
 			MinWidth, MinHeight, m.width, m.height,
 		)
 	}
-	base := m.renderBase()
-	if m.overlay == OverlayNone {
-		return base
+	if m.overlay != OverlayNone {
+		box := m.renderOverlayBox()
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
+			lipgloss.WithWhitespaceChars(" "))
 	}
-	box := m.renderOverlay()
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
-		lipgloss.WithWhitespaceChars(" "))
+	return m.renderBase()
 }
 
+// renderBase paints exactly m.height lines, each exactly m.width columns:
+// the three panes, then the keybar, then the single status line.
 func (m *Model) renderBase() string {
 	contentH := m.height - 2
-	leftW := m.width * 30 / 100
-	if leftW < 24 {
-		leftW = 24
-	}
-	if leftW > m.width-20 {
-		leftW = m.width - 20
-	}
+	leftW := m.leftW()
 	rightW := m.width - leftW
-	entriesH := contentH * 60 / 100
-	detailH := contentH - entriesH
+	entriesH := m.entriesH()
+	detailH := m.detailH()
 
-	sections := m.renderSections(leftW, contentH)
-	entries := m.renderEntries(rightW, entriesH)
-	detail := m.renderDetail(rightW, detailH)
-	right := lipgloss.JoinVertical(lipgloss.Left, entries, detail)
-	top := lipgloss.JoinHorizontal(lipgloss.Top, sections, right)
-	return top + "\n" + m.renderKeybar() + "\n" + m.renderStatus()
+	left := m.paintPane("Sections", m.focus == PaneSections, leftW, contentH, m.sideLines(leftW-2))
+	entriesTitle := m.entriesTitle()
+	right := append(
+		m.paintPane(entriesTitle, m.focus == PaneEntries, rightW, entriesH, m.entryLines(rightW-2)),
+		m.paintPane(m.detailTitle(), m.focus == PaneDetail, rightW, detailH, m.detailLines(rightW-2))...,
+	)
+	lines := make([]string, 0, m.height)
+	for i := 0; i < contentH; i++ {
+		lines = append(lines, left[i]+right[i])
+	}
+	lines = append(lines, m.renderKeybar(), m.renderStatus())
+	return strings.Join(lines, "\n")
 }
 
-func (m *Model) paneStyle(focused bool, w, h int) lipgloss.Style {
-	st := m.styles.BlurBorder
-	if focused {
-		st = m.styles.FocusBorder
+func (m *Model) leftW() int {
+	w := m.width * 30 / 100
+	if w < 24 {
+		w = 24
 	}
-	return st.Width(w - 2).Height(h - 2)
+	if w > m.width-20 {
+		w = m.width - 20
+	}
+	return w
 }
 
-func (m *Model) renderSections(w, h int) string {
-	view := max(1, h-2)
-	var b strings.Builder
-	end := min(m.secOffset+view, len(m.sections))
-	for real := m.secOffset; real < end; real++ {
-		sec := m.sections[real]
-		line := fmt.Sprintf("%s (%d)", sec.Title, len(sec.Entries))
-		if real == m.secIdx && m.focus == PaneSections {
-			line = m.styles.Selected.Render("❯ " + truncatePlain(line, w-6))
-		} else if real == m.secIdx {
-			line = "❯ " + truncatePlain(line, w-6)
-		} else {
-			line = m.styles.Normal.Render("  " + truncatePlain(line, w-6))
+// entriesTitle names the entries pane after the selected side row.
+func (m *Model) entriesTitle() string {
+	if row := m.selSide(); row != nil {
+		if row.hasFuture {
+			return row.label
 		}
-		b.WriteString(line + "\n")
+		if sec := m.curSection(); sec != nil {
+			return sec.Title
+		}
+		return row.label
 	}
-	body := strings.TrimSuffix(b.String(), "\n")
-	return m.paneStyle(m.focus == PaneSections, w, h).Render(body)
+	return "Entries"
 }
 
-func (m *Model) renderEntries(w, h int) string {
-	view := max(1, h-2)
-	var b strings.Builder
-	end := min(m.entryOffset+view, len(m.entries))
-	for i := m.entryOffset; i < end; i++ {
-		e := m.entries[i]
-		line := e.Key + " [" + kindHint(e.Kind) + "]"
-		if e.Value != "" {
-			line += " " + e.Value
-		}
-		if e.Dirty {
-			line += " " + m.styles.DirtyDot.Render("●")
-		}
-		if m.filterMode && m.focus == PaneEntries {
-			line = truncatePlain(line, w-4)
-		}
-		if i == m.entryIdx && m.focus == PaneEntries {
-			line = m.styles.Selected.Render("❯ " + truncatePlain(line, w-6))
-		} else if i == m.entryIdx {
-			line = "❯ " + truncatePlain(line, w-6)
-		} else {
-			line = m.styles.Normal.Render("  " + truncatePlain(line, w-6))
-		}
-		b.WriteString(line + "\n")
-	}
-	if len(m.entries) == 0 {
-		b.WriteString(m.styles.Help.Render("  (no entries)") + "\n")
-	}
-	body := strings.TrimSuffix(b.String(), "\n")
-	return m.paneStyle(m.focus == PaneEntries, w, h).Render(body)
-}
-
-func (m *Model) renderDetail(w, h int) string {
-	var b strings.Builder
+// detailTitle names the detail pane after the entry, flagged read-only.
+func (m *Model) detailTitle() string {
 	ro := ""
 	if sec := m.curSection(); sec != nil && sec.ReadOnly {
 		ro = " (read-only)"
+	} else if m.sideReadOnly() {
+		ro = " (read-only)"
 	}
-	title := "Detail"
 	if m.detail.Title != "" {
-		title = m.detail.Title + ro
+		return m.detail.Title + ro
 	}
-	b.WriteString(m.styles.PaneTitle.Render(truncatePlain(title, w-4)) + "\n")
-	view := max(1, h-3)
-	end := min(m.detailOff+view, len(m.detail.Lines))
+	if e := m.selEntry(); e != nil {
+		return e.Key + ro
+	}
+	if row := m.selSide(); row != nil {
+		return row.label + ro
+	}
+	return "Detail" + ro
+}
+
+// paintPane draws one titled pane: exactly h lines of exactly w columns.
+// The focused pane gets the green frame plus the ● title marker.
+func (m *Model) paintPane(title string, focused bool, w, h int, body []string) []string {
+	inner := max(1, w-2)
+	frame := m.styles.FrameBlur
+	marker := ""
+	if focused {
+		frame = m.styles.FrameFocus
+		marker = "● "
+	}
+	titleFit := fitWidth(title, max(1, inner-2-lipgloss.Width(marker)))
+	top := "╭─ " + marker + titleFit + " " + strings.Repeat("─", max(1, w-5-lipgloss.Width(marker)-lipgloss.Width(titleFit))) + "╮"
+	top = fitWidth(top, w)
+	lines := []string{frame.Render(top)}
+	for i := 0; i < h-2; i++ {
+		content := ""
+		if i < len(body) {
+			content = body[i]
+		}
+		lines = append(lines, frame.Render("│")+padRight(content, inner)+frame.Render("│"))
+	}
+	lines = append(lines, frame.Render("╰"+strings.Repeat("─", inner)+"╯"))
+	return lines
+}
+
+// sideLines renders the grouped side panel rows for the inner width.
+func (m *Model) sideLines(inner int) []string {
+	focused := m.focus == PaneSections
+	var all []string
+	sel := m.selSide()
+	for _, g := range m.groups {
+		head := g.title
+		if g.ro {
+			head += " (ro)"
+		}
+		all = append(all, m.styles.Help.Render(fitWidth(head, inner)))
+		for _, row := range g.rows {
+			text := fitWidth(sideRowLabel(row), max(0, inner-2))
+			selected := sel != nil && *sel == row
+			line := "  " + text
+			if selected {
+				line = "❯ " + text
+			}
+			line = padRight(line, inner)
+			if selected && focused {
+				line = m.styles.Selected.Render(line)
+			} else if !selected {
+				line = m.styles.Normal.Render(line)
+			}
+			all = append(all, line)
+		}
+	}
+	return windowOf(all, m.secOffset, max(1, m.secViewport()), inner)
+}
+
+func sideRowLabel(row sideRow) string {
+	if row.ro {
+		return row.label + " (ro)"
+	}
+	return row.label
+}
+
+// entryLines renders the entries list rows for the inner width.
+func (m *Model) entryLines(inner int) []string {
+	focused := m.focus == PaneEntries
+	if len(m.entries) == 0 {
+		return []string{m.styles.Help.Render(padRight("  (no entries)", inner))}
+	}
+	lines := make([]string, 0, len(m.entries))
+	end := min(m.entryOffset+max(1, m.entriesViewport()), len(m.entries))
+	for i := m.entryOffset; i < end; i++ {
+		e := m.entries[i]
+		text := e.Key + " [" + kindHint(e.Kind) + "]"
+		if e.Value != "" {
+			text += " " + e.Value
+		}
+		dot := ""
+		if e.Dirty {
+			dot = " " + m.styles.DirtyDot.Render("●")
+		}
+		text = fitWidth(text, max(0, inner-2-lipgloss.Width(" ●")))
+		line := padRight("  "+text+dot, inner)
+		if i == m.entryIdx {
+			plain := "❯ " + text
+			if focused {
+				line = m.styles.Selected.Render(padRight(plain+dot, inner))
+			} else {
+				line = padRight(plain+dot, inner)
+			}
+		} else {
+			line = m.styles.Normal.Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// detailLines renders the detail rows for the inner width.
+func (m *Model) detailLines(inner int) []string {
+	focused := m.focus == PaneDetail
+	if len(m.detail.Lines) == 0 {
+		return []string{m.styles.Help.Render(padRight("  (nothing selected)", inner))}
+	}
+	lines := make([]string, 0, len(m.detail.Lines))
+	end := min(m.detailOff+max(1, m.detailViewport()), len(m.detail.Lines))
 	for i := m.detailOff; i < end; i++ {
 		l := m.detail.Lines[i]
-		line := l.Label + ": " + l.Value
+		text := l.Label + ": " + l.Value
 		if l.Bool {
-			line += " [bool]"
+			text += " [bool]"
 		}
-		if i == m.detailLn && m.focus == PaneDetail {
-			line = m.styles.Selected.Render("❯ " + truncatePlain(line, w-6))
-		} else if i == m.detailLn {
-			line = "❯ " + truncatePlain(line, w-6)
+		text = fitWidth(text, max(0, inner-2))
+		line := padRight("  "+text, inner)
+		if i == m.detailLn {
+			plain := "❯ " + text
+			if focused {
+				line = m.styles.Selected.Render(padRight(plain, inner))
+			} else {
+				line = padRight(plain, inner)
+			}
 		} else {
-			line = m.styles.Normal.Render("  " + truncatePlain(line, w-6))
+			line = m.styles.Normal.Render(line)
 		}
-		b.WriteString(line + "\n")
+		lines = append(lines, line)
 	}
-	if len(m.detail.Lines) == 0 {
-		b.WriteString(m.styles.Help.Render("  (nothing selected)") + "\n")
-	}
-	body := strings.TrimSuffix(b.String(), "\n")
-	return m.paneStyle(m.focus == PaneDetail, w, h).Render(body)
+	return lines
 }
 
+// renderKeybar shows exactly the binding table's bar subset for the active
+// context. It is hidden while an overlay is open (View skips the base).
 func (m *Model) renderKeybar() string {
-	var keys string
-	switch m.focus {
-	case PaneSections:
-		keys = "1-5 jump  enter entries  l/tab next  [/] section  s save  r reload  ? help  q quit"
-	case PaneEntries:
-		if m.filterMode {
-			keys = "type to filter  enter done  esc clear/close"
-		} else {
-			keys = "e edit  a add  d del  space toggle  / filter  enter detail  s save  r reload  ? help"
-		}
-	default:
-		keys = "e edit  space toggle  esc back  s save  r reload  ? help  q quit"
-	}
-	return truncatePlain(m.styles.Keybar.Render(keys), m.width)
+	bar := fitWidth(keybarFor(m.contextName()), m.width)
+	return m.styles.Keybar.Render(padRight(bar, m.width))
 }
 
+// renderStatus paints exactly one status line: the active source path with
+// the total dirty count across sources on the left, the message (or ready)
+// on the right.
 func (m *Model) renderStatus() string {
 	n := m.dirtyCount()
+	plainState := "clean"
 	state := "clean"
 	if n > 0 {
-		state = fmt.Sprintf("%s dirty (%d)", m.styles.DirtyDot.Render("●"), n)
+		plainState = "● dirty(" + itoa(n) + ")"
+		state = m.styles.DirtyDot.Render("●") + " dirty(" + itoa(n) + ")"
 	}
-	left := m.activePath() + "  " + state
+	left := m.activePath() + " · " + state
+	if lipgloss.Width(left) > m.width {
+		left = fitWidth(m.activePath()+" · "+plainState, m.width)
+		return m.styles.Status.Render(padRight(left, m.width))
+	}
 	right := m.status
 	if right == "" {
 		right = "ready"
@@ -173,87 +258,166 @@ func (m *Model) renderStatus() string {
 	if m.filter != "" {
 		right = "filter: " + m.filter + "  " + right
 	}
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
-		gap = 1
+		right = fitWidth(right, max(0, m.width-lipgloss.Width(left)-1))
+		gap = m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	}
-	line := left + strings.Repeat(" ", gap) + right
-	return m.styles.Status.Width(m.width - 2).Render(truncatePlain(line, m.width-2))
+	if gap < 0 {
+		gap = 0
+	}
+	return m.styles.Status.Render(left + strings.Repeat(" ", gap) + right)
 }
 
-func (m *Model) renderOverlay() string {
+// renderOverlayBox centers a titled box for the topmost overlay.
+func (m *Model) renderOverlayBox() string {
 	switch m.overlay {
 	case OverlayHelp:
-		return m.styles.OverlayBox.Width(min(m.width-4, 66)).Render(m.helpText())
+		lines := m.helpLines()
+		maxLines := max(1, m.height-6)
+		start := min(m.helpScroll, max(0, len(lines)-maxLines))
+		win := lines[start:min(start+maxLines, len(lines))]
+		return strings.Join(m.paintBox("Help", min(m.width-4, 66), win), "\n")
 	case OverlayConfirm:
-		body := m.confirmText + "\n\n[enter] confirm   [esc] cancel"
-		return m.styles.OverlayBox.Render(body)
+		lines := strings.Split(m.confirmText, "\n")
+		lines = append(lines, "", "[enter] confirm   [esc] cancel")
+		return strings.Join(m.paintBox("Confirm", min(m.width-4, 66), lines), "\n")
 	case OverlayEdit:
-		body := m.editTitle + "\n\n> " + m.editBuf + "▌"
+		lines := []string{"> " + m.editBuf + "▌"}
 		if m.editErr != "" {
-			body += "\n" + m.styles.ErrorMsg.Render(m.editErr)
+			lines = append(lines, "", m.editErr)
 		} else {
-			body += "\n[enter] apply   [esc] cancel"
+			lines = append(lines, "", "[enter] apply   [esc] cancel")
 		}
-		return m.styles.OverlayBox.Width(min(m.width-4, 60)).Render(body)
+		return strings.Join(m.paintBox(m.editTitle, min(m.width-4, 60), lines), "\n")
 	case OverlayAdd:
 		sec := ""
 		if s := m.curSection(); s != nil {
 			sec = string(s.ID)
 		}
-		body := "Add entry to " + sec + "\n\n> " + m.addBuf + "▌"
+		lines := []string{"> " + m.addBuf + "▌"}
 		if m.addErr != "" {
-			body += "\n" + m.styles.ErrorMsg.Render(m.addErr)
+			lines = append(lines, "", m.addErr)
 		} else {
-			body += "\n[enter] add   [esc] cancel"
+			lines = append(lines, "", "[enter] add   [esc] cancel")
 		}
-		return m.styles.OverlayBox.Width(min(m.width-4, 60)).Render(body)
+		return strings.Join(m.paintBox("Add entry to "+sec, min(m.width-4, 60), lines), "\n")
 	case OverlayError:
-		body := m.styles.ErrorMsg.Render("Error") + "\n\n" + m.errorText + "\n\n[enter/esc] close"
-		return m.styles.OverlayBox.Width(min(m.width-4, 60)).Render(body)
+		lines := append(strings.Split(m.errorText, "\n"), "", "[enter/esc] close")
+		return strings.Join(m.paintBox("Error", min(m.width-4, 60), lines), "\n")
 	default:
 		return ""
 	}
 }
 
-func (m *Model) helpText() string {
-	rows := [][]string{
-		{"1-5", "Select section, focus Entries"},
-		{"0", "Focus Entries/Detail toggle"},
-		{"j/k", "Move selection"},
-		{"h/l", "Move focus left/right"},
-		{"tab/shift+tab", "Next/previous pane"},
-		{"[ / ]", "Previous/next section"},
-		{"enter", "Drill down / confirm"},
-		{"esc", "Climb back / close popup"},
-		{"e", "Edit scalar value"},
-		{"a", "Add entry"},
-		{"d", "Delete entry (confirm)"},
-		{"space", "Toggle bool"},
-		{"s", "Save (confirm when dirty)"},
-		{"r", "Reload (confirm when dirty)"},
-		{"?", "Open/close help"},
-		{"q", "Quit (confirm when dirty)"},
-		{"/", "Filter entries"},
+// paintBox draws a centered overlay box of exactly w columns.
+func (m *Model) paintBox(title string, w int, lines []string) []string {
+	inner := max(1, w-2)
+	frame := m.styles.FrameFocus
+	titleFit := fitWidth(title, max(1, inner-4))
+	top := "╭─ " + titleFit + " " + strings.Repeat("─", max(1, w-5-lipgloss.Width(titleFit))) + "╮"
+	out := []string{frame.Render(fitWidth(top, w)), frame.Render("│" + strings.Repeat(" ", inner) + "│")}
+	width := max(1, inner-2)
+	for _, l := range lines {
+		for _, w := range wrapLine(stripANSI(l), width) {
+			out = append(out, frame.Render("│")+padRight("  "+w, inner)+frame.Render("│"))
+		}
 	}
-	var b strings.Builder
-	b.WriteString(m.styles.PaneTitle.Render("lazyomo keys") + "\n\n")
-	lines := make([]string, 0, len(rows))
-	for _, r := range rows {
-		lines = append(lines, fmt.Sprintf("%-14s %s", r[0], r[1]))
+	out = append(out, frame.Render("│"+strings.Repeat(" ", inner)+"│"))
+	out = append(out, frame.Render("╰"+strings.Repeat("─", inner)+"╯"))
+	return out
+}
+
+// helpLines renders every binding table: one headed block per context with
+// its label/desc pairs, so help always matches the dispatch table.
+func (m *Model) helpLines() []string {
+	lines := []string{m.styles.PaneTitle.Render("lazyomo keys"), ""}
+	seenCtx := map[string]bool{}
+	for _, table := range bindingTables {
+		if seenCtx[table.Name] {
+			continue
+		}
+		seenCtx[table.Name] = true
+		lines = append(lines, table.Title)
+		notes := map[string]string{
+			ctxFilter: "type to filter",
+			ctxEdit:   "type to edit",
+			ctxAdd:    "type to add",
+			ctxPicker: "type to filter",
+		}
+		if note, ok := notes[table.Name]; ok {
+			lines = append(lines, "  "+note)
+		}
+		seen := map[string]bool{}
+		for _, b := range table.Keys {
+			pair := b.Label + " " + b.Desc
+			if seen[pair] {
+				continue
+			}
+			seen[pair] = true
+			lines = append(lines, "  "+padRight(b.Label, 9)+" "+b.Desc)
+		}
+		lines = append(lines, "")
 	}
-	start := min(m.helpScroll, max(0, len(lines)-1))
-	end := min(start+14, len(lines))
-	for _, l := range lines[start:end] {
-		b.WriteString(l + "\n")
+	lines = append(lines, "[?/esc] close")
+	return lines
+}
+
+// wrapLine word-wraps plain text to at most n columns; words longer
+// than n hard-split so paths and errors never vanish off the box edge.
+func wrapLine(s string, n int) []string {
+	if n <= 0 {
+		return []string{""}
 	}
-	b.WriteString("\n[?/esc] close")
-	return strings.TrimSuffix(b.String(), "\n")
+	if lipgloss.Width(s) <= n {
+		return []string{s}
+	}
+	var out []string
+	cur := ""
+	curW := 0
+	flush := func() {
+		if cur != "" {
+			out = append(out, cur)
+			cur = ""
+			curW = 0
+		}
+	}
+	for _, word := range strings.Fields(s) {
+		ww := lipgloss.Width(word)
+		if ww > n {
+			flush()
+			runes := []rune(word)
+			for len(runes) > 0 {
+				take := len(runes)
+				for take > 0 && lipgloss.Width(string(runes[:take])) > n {
+					take--
+				}
+				if take == 0 {
+					take = 1
+				}
+				out = append(out, string(runes[:take]))
+				runes = runes[take:]
+			}
+			continue
+		}
+		if curW > 0 && curW+1+ww > n {
+			flush()
+		}
+		if curW > 0 {
+			cur += " "
+			curW++
+		}
+		cur += word
+		curW += ww
+	}
+	flush()
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
 }
 
 // kindHint derives the entry-row type hint locally from EntryKind.
-// The editor API is frozen and exposes no hint helper; this stays a
-// TUI-side rendering concern.
 func kindHint(k editor.EntryKind) string {
 	switch k {
 	case editor.KindScalar:
@@ -269,19 +433,84 @@ func kindHint(k editor.EntryKind) string {
 	}
 }
 
-func truncatePlain(s string, n int) string {
+// fitWidth truncates plain text to at most n columns.
+func fitWidth(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= n {
+	if lipgloss.Width(s) <= n {
 		return s
 	}
-	return string(runes[:n])
+	runes := []rune(s)
+	for len(runes) > 0 && lipgloss.Width(string(runes)) > n {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes)
 }
 
-func truncate(s string, n int) string {
-	return truncatePlain(s, n)
+// padRight pads text (which may hold ANSI codes) to exactly n columns.
+func padRight(s string, n int) string {
+	if w := lipgloss.Width(s); w < n {
+		return s + strings.Repeat(" ", n-w)
+	}
+	return s
+}
+
+// stripANSI drops SGR escape sequences for width math on styled strings.
+func stripANSI(s string) string {
+	var b strings.Builder
+	in := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			in = true
+			i++
+			continue
+		}
+		if in {
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+				in = false
+			}
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// clampWindow keeps a cursor line inside a scrolled window with margin.
+func clampWindow(offset, cursor, view, total int) int {
+	if view <= 0 {
+		return 0
+	}
+	if cursor >= 0 {
+		if cursor < offset+scrollMargin {
+			offset = cursor - scrollMargin
+		}
+		if cursor > offset+view-1-scrollMargin {
+			offset = cursor - view + 1 + scrollMargin
+		}
+	}
+	if offset > total-view {
+		offset = total - view
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return offset
+}
+
+// windowOf slices rows to a scrolled window; short windows pad blank.
+func windowOf(rows []string, start, view int, inner int) []string {
+	out := make([]string, 0, view)
+	for i := 0; i < view; i++ {
+		if start+i < len(rows) {
+			out = append(out, rows[start+i])
+		} else {
+			out = append(out, padRight("", inner))
+		}
+	}
+	return out
 }
 
 func min(a, b int) int {

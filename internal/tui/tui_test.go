@@ -274,6 +274,16 @@ func (f *fakeWorkspace) Sources() []workspace.Source {
 	return append([]workspace.Source(nil), f.sources...)
 }
 
+func (f *fakeWorkspace) Stale() []workspace.StaleSource {
+	var out []workspace.StaleSource
+	for _, source := range f.sources {
+		if f.stale[source.ID] {
+			out = append(out, workspace.StaleSource{SourceID: source.ID, Path: source.Path})
+		}
+	}
+	return out
+}
+
 func (f *fakeWorkspace) SaveAll() workspace.SaveResult {
 	f.saveCalls++
 	var result workspace.SaveResult
@@ -485,8 +495,8 @@ func TestBracketCyclesSections(t *testing.T) {
 		t.Errorf("secIdx = %d, want 0", m.secIdx)
 	}
 	m = sendKeys(t, m, "[")
-	if m.secIdx != 6 {
-		t.Errorf("wrapped secIdx = %d, want 6", m.secIdx)
+	if want := len(m.flat) - 1; m.secIdx != want {
+		t.Errorf("wrapped secIdx = %d, want %d", m.secIdx, want)
 	}
 	m = sendKeys(t, m, "]")
 	if m.secIdx != 0 {
@@ -816,9 +826,9 @@ func TestQuitDirtyConfirms(t *testing.T) {
 func TestReadOnlySectionBlocked(t *testing.T) {
 	f := newFakeEditor()
 	m := newTestModel(newFakeWorkspace(f))
-	// "[" from the first section wraps to the last one: the $schema
-	// read-only section. Telemetry and Git stay editable toggles.
-	m = sendKeys(t, m, "[", "enter")
+	// "7" jumps to the seventh visible row: the $schema read-only
+	// section. Telemetry and Git stay editable toggles.
+	m = sendKeys(t, m, "7")
 	if m.focus != PaneEntries || m.secIdx != 6 {
 		t.Fatalf("read-only section not selected: %v %d", m.focus, m.secIdx)
 	}
@@ -841,7 +851,7 @@ func TestDirtyRendering(t *testing.T) {
 	f.dirty = []string{"/models/k1", "/models/b1"}
 	m := newTestModel(newFakeWorkspace(f))
 	view := m.View()
-	if !strings.Contains(view, "dirty (2)") {
+	if !strings.Contains(view, "dirty(2)") {
 		t.Errorf("view missing dirty count:\n%s", view)
 	}
 	if !strings.Contains(view, "●") {
@@ -1062,7 +1072,7 @@ func TestDirtyCountAggregatesSources(t *testing.T) {
 	if got := m.dirtyCount(); got != 3 {
 		t.Fatalf("dirtyCount() = %d, want 3", got)
 	}
-	if view := m.View(); !strings.Contains(view, "dirty (3)") {
+	if view := m.View(); !strings.Contains(view, "dirty(3)") {
 		t.Errorf("view missing aggregate dirty count:\n%s", view)
 	}
 	m = sendKeys(t, m, "s")
