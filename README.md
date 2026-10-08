@@ -4,6 +4,8 @@ TUI editor for `~/.omo/omo.jsonc` and the MCP servers file at `~/.omo/agent/mcp.
 
 It opens your live omo config and your MCP servers in the terminal so you can browse sections, tweak models and routing, manage servers, and inspect your providers and cached catalogs, then save once. Nothing touches disk until you confirm save, and every save leaves a timestamped backup next to the file.
 
+![lazyomo preview](preview.gif)
+
 ## Layout
 
 Three bordered panes over two fixed lines. The left column is a grouped side panel:
