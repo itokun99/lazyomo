@@ -269,11 +269,14 @@ func (m *Model) openEdit() {
 			m.editPath = e.Path
 			m.editTitle = "Edit " + e.Path
 			m.editBuf = e.Value
+			m.editCursor = len([]rune(m.editBuf))
 			m.editErr = ""
 		case editor.KindBool:
 			m.status = "use space to toggle bools"
 		default:
-			m.status = "select a detail row to edit"
+			m.focus = PaneDetail
+			m.detailLn = 0
+			m.openEdit()
 		}
 		return
 	}
@@ -297,6 +300,7 @@ func (m *Model) openEdit() {
 	m.editPath = l.Path
 	m.editTitle = "Edit " + l.Path
 	m.editBuf = l.Value
+	m.editCursor = len([]rune(m.editBuf))
 	m.editErr = ""
 }
 
@@ -315,6 +319,7 @@ func (m *Model) openAdd() {
 	}
 	m.overlay = OverlayAdd
 	m.addBuf = ""
+	m.addCursor = 0
 	m.addErr = ""
 }
 
@@ -443,13 +448,29 @@ func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mcpAddSubmit()
 			}
 		case actBackspace:
-			if m.overlay == OverlayEdit && len(m.editBuf) > 0 {
-				m.editBuf = m.editBuf[:len(m.editBuf)-1]
-			} else if m.overlay == OverlayAdd && len(m.addBuf) > 0 {
-				m.addBuf = m.addBuf[:len(m.addBuf)-1]
+			if m.overlay == OverlayEdit {
+				m.editBuf, m.editCursor = deleteBefore(m.editBuf, m.editCursor)
+			} else if m.overlay == OverlayAdd {
+				m.addBuf, m.addCursor = deleteBefore(m.addBuf, m.addCursor)
 			} else if m.overlay == OverlayMCPAdd && m.mcpAddStage == 0 && len(m.addBuf) > 0 {
-				m.addBuf = m.addBuf[:len(m.addBuf)-1]
+				m.addBuf, m.addCursor = deleteBefore(m.addBuf, m.addCursor)
 			}
+		case actCursorLeft:
+			m.moveEditCursor(-1)
+		case actCursorRight:
+			m.moveEditCursor(1)
+		case actCursorHome:
+			m.setEditCursor(0)
+		case actCursorEnd:
+			m.setEditCursor(len([]rune(m.activeEditBuffer())))
+		case actDeleteWord:
+			m.deleteEditWord()
+		case actCursorClear:
+			m.setEditBuffer("", 0)
+		case actCursorKill:
+			buf := []rune(m.activeEditBuffer())
+			pos := m.activeEditCursor()
+			m.setEditBuffer(string(buf[:pos]), pos)
 		case actMoveUp:
 			if m.overlay == OverlayMCPAdd {
 				m.mcpAddMove(-1)
@@ -470,16 +491,81 @@ func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyRunes {
 		switch m.overlay {
 		case OverlayEdit:
-			m.editBuf += string(msg.Runes)
+			m.editBuf, m.editCursor = insertAt(m.editBuf, m.editCursor, string(msg.Runes))
 		case OverlayAdd:
-			m.addBuf += string(msg.Runes)
+			m.addBuf, m.addCursor = insertAt(m.addBuf, m.addCursor, string(msg.Runes))
 		case OverlayMCPAdd:
 			if m.mcpAddStage == 0 {
-				m.addBuf += string(msg.Runes)
+				m.addBuf, m.addCursor = insertAt(m.addBuf, m.addCursor, string(msg.Runes))
 			}
 		}
 	}
 	return m, nil
+}
+
+func insertAt(value string, cursor int, inserted string) (string, int) {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	added := []rune(inserted)
+	runes = append(runes[:cursor], append(added, runes[cursor:]...)...)
+	return string(runes), cursor + len(added)
+}
+
+func deleteBefore(value string, cursor int) (string, int) {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	if cursor == 0 {
+		return value, cursor
+	}
+	runes = append(runes[:cursor-1], runes[cursor:]...)
+	return string(runes), cursor - 1
+}
+
+func (m *Model) activeEditBuffer() string {
+	if m.overlay == OverlayAdd || m.overlay == OverlayMCPAdd {
+		return m.addBuf
+	}
+	return m.editBuf
+}
+
+func (m *Model) activeEditCursor() int {
+	if m.overlay == OverlayAdd || m.overlay == OverlayMCPAdd {
+		return m.addCursor
+	}
+	return m.editCursor
+}
+
+func (m *Model) setEditCursor(cursor int) {
+	cursor = max(0, min(cursor, len([]rune(m.activeEditBuffer()))))
+	if m.overlay == OverlayAdd || m.overlay == OverlayMCPAdd {
+		m.addCursor = cursor
+	} else {
+		m.editCursor = cursor
+	}
+}
+
+func (m *Model) moveEditCursor(delta int) {
+	m.setEditCursor(m.activeEditCursor() + delta)
+}
+
+func (m *Model) setEditBuffer(value string, cursor int) {
+	if m.overlay == OverlayAdd || m.overlay == OverlayMCPAdd {
+		m.addBuf, m.addCursor = value, cursor
+	} else {
+		m.editBuf, m.editCursor = value, cursor
+	}
+}
+
+func (m *Model) deleteEditWord() {
+	buf := []rune(m.activeEditBuffer())
+	pos := m.activeEditCursor()
+	for pos > 0 && buf[pos-1] == ' ' {
+		pos--
+	}
+	for pos > 0 && buf[pos-1] != ' ' {
+		pos--
+	}
+	m.setEditBuffer(string(append(buf[:pos], buf[m.activeEditCursor():]...)), pos)
 }
 
 // closeOverlay cancels the topmost overlay (P5: esc cancels topmost

@@ -21,7 +21,7 @@ const pickerMaxQuery = 128
 // keybar stays hidden while an overlay is open, so the box carries it).
 const pickerFooter = "type to filter  enter select  tab preview  ctrl+e raw  esc cancel"
 
-var pickerPathRe = regexp.MustCompile(`^/(models|agents|categories)/[^/]+/model$`)
+var pickerPathRe = regexp.MustCompile(`^/(models|agents|categories)/[^/]+/(model|reasoning)$`)
 
 func isPickerPath(path string) bool {
 	return pickerPathRe.MatchString(path)
@@ -54,6 +54,14 @@ type pickerState struct {
 // alias-accepting agents/categories fields). Tests inject pickerBuild to
 // supply synthetic fixtures; production uses the bound *editor.Editor.
 func (m *Model) pickerCandidatesFor(targetPath string) []workspace.Candidate {
+	if strings.HasSuffix(targetPath, "/reasoning") {
+		return []workspace.Candidate{
+			{Value: "low"},
+			{Value: "medium"},
+			{Value: "high"},
+			{Value: "max"},
+		}
+	}
 	var cands []workspace.Candidate
 	if m.pickerBuild != nil {
 		cands = m.pickerBuild(targetPath)
@@ -82,6 +90,7 @@ func (m *Model) openPicker(targetPath, current string) {
 		m.editPath = targetPath
 		m.editTitle = "Edit " + targetPath
 		m.editBuf = current
+		m.editCursor = len([]rune(current))
 		m.editErr = ""
 		return
 	}
@@ -302,6 +311,7 @@ func (m *Model) pickerToRaw() {
 	m.editPath = p.path
 	m.editTitle = "Edit " + p.path
 	m.editBuf = p.current
+	m.editCursor = len([]rune(p.current))
 	m.editErr = ""
 	m.picker = nil
 }
@@ -428,7 +438,11 @@ func (m *Model) renderPicker() string {
 	inner := max(1, boxW-2)
 	rows := pickerResultRows(m.width, m.height)
 	frame := m.styles.FrameFocus
-	title := middleTruncate("Pick model", max(1, inner-4))
+	titleText := "Pick model"
+	if m.picker != nil && strings.HasSuffix(m.picker.path, "/reasoning") {
+		titleText = "Pick reasoning"
+	}
+	title := middleTruncate(titleText, max(1, inner-4))
 	top := "╭─ " + title + " " + strings.Repeat("─", max(1, boxW-5-lipgloss.Width(title))) + "╮"
 	top = fitWidth(top, boxW)
 	out := []string{frame.Render(top)}

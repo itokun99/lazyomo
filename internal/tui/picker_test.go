@@ -632,7 +632,7 @@ func TestIsPickerPath(t *testing.T) {
 		{"/categories/quick/model", true},
 		{"/models/k1/models", false},
 		{"/models/k1/models/0", false},
-		{"/models/k1/reasoning", false},
+		{"/models/k1/reasoning", true},
 		{"/model_profile", false},
 		{"/telemetry/enabled", false},
 		{"/models/k1/model/extra", false},

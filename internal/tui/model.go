@@ -113,8 +113,10 @@ type Model struct {
 	editPath    string
 	editTitle   string
 	editBuf     string
+	editCursor  int
 	editErr     string
 	addBuf      string
+	addCursor   int
 	addErr      string
 	errorText   string
 

@@ -328,7 +328,7 @@ func (m *Model) renderOverlayBox() string {
 		lines = append(lines, "", "[enter] confirm   [esc] cancel")
 		return strings.Join(m.paintBox("Confirm", min(m.width-4, 66), lines), "\n")
 	case OverlayEdit:
-		lines := []string{"> " + m.editBuf + "▌"}
+		lines := []string{"> " + cursorText(m.editBuf, m.editCursor)}
 		if m.editErr != "" {
 			lines = append(lines, "", m.editErr)
 		} else {
@@ -340,7 +340,7 @@ func (m *Model) renderOverlayBox() string {
 		if s := m.curSection(); s != nil {
 			sec = string(s.ID)
 		}
-		lines := []string{"> " + m.addBuf + "▌"}
+		lines := []string{"> " + cursorText(m.addBuf, m.addCursor)}
 		if m.addErr != "" {
 			lines = append(lines, "", m.addErr)
 		} else {
@@ -360,6 +360,12 @@ func (m *Model) renderOverlayBox() string {
 	default:
 		return ""
 	}
+}
+
+func cursorText(value string, cursor int) string {
+	runes := []rune(value)
+	cursor = max(0, min(cursor, len(runes)))
+	return string(runes[:cursor]) + "▌" + string(runes[cursor:])
 }
 
 // paintBox draws a centered overlay box of exactly w columns.

@@ -542,6 +542,48 @@ func TestEditScalarFlow(t *testing.T) {
 	}
 }
 
+func TestEditCursorCanInsertInMiddle(t *testing.T) {
+	f := newFakeEditor()
+	m := newTestModel(newFakeWorkspace(f))
+	m.focus = PaneEntries
+	m = sendKeys(t, m, "e", "left", "x", "enter")
+	if len(f.sets) != 1 || f.sets[0] != [2]string{"/models/k1", "vx1"} {
+		t.Errorf("sets = %v, want inserted value vx1", f.sets)
+	}
+}
+
+func TestEntryEditOpensDetailForCompositeEntries(t *testing.T) {
+	f := newFakeEditor()
+	m := newTestModel(newFakeWorkspace(f))
+	m.focus = PaneEntries
+	m.entryIdx = 2
+	m.refresh()
+	m = sendKeys(t, m, "e")
+	if m.focus != PaneDetail || m.overlay != OverlayEdit {
+		t.Fatalf("focus=%v overlay=%v, want detail edit", m.focus, m.overlay)
+	}
+	if m.editPath != "/models/ch/0" {
+		t.Errorf("editPath = %q, want first chain field", m.editPath)
+	}
+}
+
+func TestReasoningUsesOptionPicker(t *testing.T) {
+	f := newFakeEditor()
+	m := newTestModel(newFakeWorkspace(f))
+	m.focus = PaneEntries
+	m.entryIdx = 3
+	m.refresh()
+	m = sendKeys(t, m, "enter")
+	m.detailLn = 1
+	m = sendKeys(t, m, "e")
+	if m.overlay != OverlayPicker {
+		t.Fatalf("overlay = %v, want reasoning picker", m.overlay)
+	}
+	if len(m.picker.cands) != 4 || m.picker.cands[0].Value != "low" || m.picker.cands[3].Value != "max" {
+		t.Fatalf("reasoning candidates = %+v", m.picker.cands)
+	}
+}
+
 func TestEditCancelKeepsValue(t *testing.T) {
 	f := newFakeEditor()
 	m := newTestModel(newFakeWorkspace(f))

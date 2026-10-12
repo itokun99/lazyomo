@@ -53,6 +53,13 @@ const (
 	actPickerRaw
 	actPickerMove
 	actPickerClear
+	actCursorLeft
+	actCursorRight
+	actCursorHome
+	actCursorEnd
+	actDeleteWord
+	actCursorClear
+	actCursorKill
 )
 
 // Binding declares one key inside one context: the tea match token, the
@@ -210,6 +217,17 @@ var bindingTables = []ContextTable{
 			{Key: "enter", Label: "enter", Desc: "apply", Act: actSubmit, Bar: true},
 			{Key: "esc", Label: "esc", Desc: "cancel", Act: actCancel, Bar: true},
 			{Key: "backspace", Label: "bsp", Desc: "delete", Act: actBackspace},
+			{Key: "left", Label: "left/right", Desc: "cursor", Act: actCursorLeft},
+			{Key: "right", Label: "left/right", Desc: "cursor", Act: actCursorRight},
+			{Key: "home", Label: "home/end", Desc: "ends", Act: actCursorHome},
+			{Key: "end", Label: "home/end", Desc: "ends", Act: actCursorEnd},
+			{Key: "ctrl+a", Label: "C-a/e", Desc: "ends", Act: actCursorHome},
+			{Key: "ctrl+e", Label: "C-a/e", Desc: "ends", Act: actCursorEnd},
+			{Key: "ctrl+w", Label: "C-w", Desc: "del-word", Act: actDeleteWord},
+			{Key: "ctrl+u", Label: "C-u", Desc: "clear", Act: actCursorClear},
+			{Key: "ctrl+k", Label: "C-k", Desc: "kill", Act: actCursorKill},
+			{Key: "ctrl+b", Label: "C-b/f", Desc: "cursor", Act: actCursorLeft},
+			{Key: "ctrl+f", Label: "C-b/f", Desc: "cursor", Act: actCursorRight},
 		},
 	},
 	{
@@ -218,6 +236,17 @@ var bindingTables = []ContextTable{
 			{Key: "enter", Label: "enter", Desc: "add", Act: actSubmit, Bar: true},
 			{Key: "esc", Label: "esc", Desc: "cancel", Act: actCancel, Bar: true},
 			{Key: "backspace", Label: "bsp", Desc: "delete", Act: actBackspace},
+			{Key: "left", Label: "left/right", Desc: "cursor", Act: actCursorLeft},
+			{Key: "right", Label: "left/right", Desc: "cursor", Act: actCursorRight},
+			{Key: "home", Label: "home/end", Desc: "ends", Act: actCursorHome},
+			{Key: "end", Label: "home/end", Desc: "ends", Act: actCursorEnd},
+			{Key: "ctrl+a", Label: "C-a/e", Desc: "ends", Act: actCursorHome},
+			{Key: "ctrl+e", Label: "C-a/e", Desc: "ends", Act: actCursorEnd},
+			{Key: "ctrl+w", Label: "C-w", Desc: "del-word", Act: actDeleteWord},
+			{Key: "ctrl+u", Label: "C-u", Desc: "clear", Act: actCursorClear},
+			{Key: "ctrl+k", Label: "C-k", Desc: "kill", Act: actCursorKill},
+			{Key: "ctrl+b", Label: "C-b/f", Desc: "cursor", Act: actCursorLeft},
+			{Key: "ctrl+f", Label: "C-b/f", Desc: "cursor", Act: actCursorRight},
 		},
 	},
 	{

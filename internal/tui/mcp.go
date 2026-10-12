@@ -341,6 +341,7 @@ func (m *Model) mcpStartFieldEdit(name, field string, kind mcpfile.FieldKind) {
 	m.editKind = kind
 	m.editTitle = "Edit mcpServers/" + name + "/" + field
 	m.editBuf = buf
+	m.editCursor = len([]rune(buf))
 	m.editErr = ""
 }
 
@@ -437,6 +438,7 @@ func (m *Model) mcpStartRename(name string) {
 	m.editKind = mcpfile.FieldString
 	m.editTitle = "Rename server " + name
 	m.editBuf = name
+	m.editCursor = len([]rune(name))
 	m.editErr = ""
 }
 
