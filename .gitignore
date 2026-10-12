@@ -7,3 +7,4 @@
 /lazyomo.exe
 vendor/
 .env
+.omo/
